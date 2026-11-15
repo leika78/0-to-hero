@@ -26,6 +26,7 @@ const writer = require('./scribe-writer.js');
 
 const slug = process.argv[2];
 const DRY = process.argv.includes('--dry-run');
+const FLUSH = process.argv.includes('--flush'); // /memorise step 0: read every queued delta now, however small
 if (!slug) process.exit(1);
 
 const STATE_ROOT = path.join(os.homedir(), '.claude', 'scribe');
@@ -384,7 +385,7 @@ function main() {
     const bySession = new Map();
     for (const e of q) {
       const prev = bySession.get(e.session_id);
-      bySession.set(e.session_id, { ...e, since: Math.min(e.since || e.ts || Date.now(), prev?.since ?? Infinity), flush: !!(e.flush || prev?.flush) });
+      bySession.set(e.session_id, { ...e, since: Math.min(e.since || e.ts || Date.now(), prev?.since ?? Infinity), flush: !!(FLUSH || e.flush || prev?.flush) });
     }
     if (!bySession.size) { log('nothing queued'); return; }
 

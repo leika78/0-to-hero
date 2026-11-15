@@ -2,7 +2,11 @@ Review what the memory scribe queued for this project: short, grouped, skippable
 
 One run empties the queue: every proposal and every candidate ends kept, done or archived. Flags: `/memorise` (default) · `/memorise --all` (plus the Ledger topic). `--rules` is still accepted and changes nothing: candidates are always reviewed.
 
-## 0. Recover handovers
+## 0. Bring the scribe up to date
+
+The scribe reads turns in batches, so the latest ones may still sit in its queue. Run it now, in the foreground, so this review sees them: `node ~/.claude/hooks/scribe/scribe-worker.js <slug> --flush` (slug = the name of the folder in `~/.claude/scribe/` matching the project root path with non-alphanumerics → `-`, trimmed, case-insensitive). One model call, under the scribe's own token budgets; it exits at once when the queue is empty or another worker holds the lock. A non-zero exit or a slow run never blocks the review: say so in one line and go on.
+
+## 0b. Recover handovers
 
 Read every `*.md` directly in `~/.claude/handovers/<cwd-slug>/` (slug = the folder the session started in with every non-alphanumeric character replaced by `-`, leading and trailing `-` trimmed, e.g. `D--CLAUDE-project-0-to-Hero`). Each is un-memorised work from earlier in this session or from the session it resumed. Blocks overlap: read them oldest first by header time, the newest block's version of an event wins, one event counts once. A `### Unverified` list names what the transcript does not hold verbatim: not found in the transcript or the code → drop it. After **Memorised.**, move the files you read (and their `.consumed` markers) into `done/` in that folder, except a file whose newest `## Manual handover` block is under 15 minutes old (header time) with no `.consumed` marker newer than it: the next `/clear` still has to inject it, so leave it in place. If the scribe's `JOURNAL.md` block for this session already covers a handover's content, nothing to add: the journal is the history now.
 

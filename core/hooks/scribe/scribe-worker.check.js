@@ -156,5 +156,14 @@ queue('post', [['p1', trB]]); fs.mkdirSync(path.join(stateOf('post'), 'cursors',
 runAs('post');
 const postQ = path.join(stateOf('post'), 'queue.jsonl');
 assert.strictEqual(fs.existsSync(postQ) ? fs.readFileSync(postQ, 'utf8') : '', '', 'applied batch not re-queued by the outer catch');
+
+// A small fresh delta waits for more; `--flush` (/memorise step 0) reads it now.
+const flushQ = path.join(stateOf('fl'), 'queue.jsonl'), flushCur = path.join(stateOf('fl'), 'cursors', 'f1.json');
+fs.writeFileSync(flushQ, JSON.stringify({ session_id: 'f1', transcript_path: trB, cwd: proj, flush: false, ts: Date.now() }) + '\n');
+runAs('fl');
+assert.ok(!fs.existsSync(flushCur) && fs.readFileSync(flushQ, 'utf8').includes('"f1"'), 'small delta held without --flush');
+spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'fl', '--flush'], { env: stubEnv, encoding: 'utf8' });
+assert.strictEqual(JSON.parse(fs.readFileSync(flushCur, 'utf8')).line, 1, '--flush reads the small delta');
+assert.strictEqual(fs.existsSync(flushQ) ? fs.readFileSync(flushQ, 'utf8') : '', '', '--flush empties the queue');
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-worker.check: ok');
