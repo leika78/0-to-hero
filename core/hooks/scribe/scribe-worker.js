@@ -172,29 +172,34 @@ function workspaces(root) {
 function memorySnapshot(root, wss, delta, sessions = []) {
   const touched = wss.filter(ws => delta.includes(ws + '/') || delta.includes(ws + '\\'));
   let s = '';
-  // The journal block already written for these sessions: the model restates the WHOLE session (earlier runs included), not just this delta.
+  const readText = f => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
+  // The journal blocks already written for these sessions: the model restates the WHOLE session (earlier runs included), not just this delta.
+  // A block tagged "aaaa+bbbb" (an earlier merged run) belongs to every id of its tag.
   try {
-    const tag = sessions.map(i => String(i).slice(0, 8)).join('+');
-    const block = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8').split(/\n(?=### )/).find(b => b.startsWith('### ') && b.includes(`— session ${tag}\n`) || b.endsWith(`— session ${tag}`));
-    if (block) s += `\n### JOURNAL.md — what was already summarised for this session (restate it whole, updated)\n${block.trim()}\n`;
+    const ids = sessions.map(i => String(i).slice(0, 8));
+    const blocks = readText(path.join(root, 'JOURNAL.md')).split(/\n(?=### )/).filter(b => {
+      const tag = (b.match(/^### .* — session (\S+)/) || [])[1];
+      return tag && tag.split('+').some(t => ids.includes(t));
+    });
+    if (blocks.length) s += `\n### JOURNAL.md — what was already summarised for this session (restate it whole, updated)\n${blocks.map(b => b.trim()).join('\n')}\n`;
   } catch {}
   const dec = path.join(root, 'DECISIONS.md');
   if (fs.existsSync(dec)) {
-    const t = fs.readFileSync(dec, 'utf8');
+    const t = readText(dec);
     const facts = writer.sectionBody(t, 'Facts'); if (facts && facts.trim()) s += `\n### DECISIONS.md ## Facts (current) — reuse these keys\n${facts.trim()}\n`;
     const led = (writer.sectionBody(t, 'Ledger') || '').split('\n').filter(l => l.startsWith('- ')).slice(0, 10).join('\n');
     if (led) s += `\n### DECISIONS.md ## Ledger (10 newest)\n${led}\n`;
   }
   // Graduated doctrine: a rule already in Gotchas must not be re-proposed as a candidate.
-  try { const g = writer.sectionBody(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8'), 'Gotchas'); if (g && g.trim()) s += `\n### CLAUDE.md ## Gotchas (already doctrine)\n${g.trim()}\n`; } catch {}
+  try { const g = writer.sectionBody(readText(path.join(root, 'CLAUDE.md')), 'Gotchas'); if (g && g.trim()) s += `\n### CLAUDE.md ## Gotchas (already doctrine)\n${g.trim()}\n`; } catch {}
   const list = touched.length ? touched : [...wss];
   // Root rules left by the light phase stay visible after the first workspace appears, until /memorise moves them.
   if (!list.includes('.') && fs.existsSync(path.join(root, 'LEARNINGS.md'))) list.push('.');
   for (const ws of list) {
     const ctx = path.join(root, ws, 'CONTEXT.md'); const lrn = path.join(root, ws, 'LEARNINGS.md');
-    if (fs.existsSync(ctx)) { const b = writer.sectionBody(fs.readFileSync(ctx, 'utf8'), 'Current state'); if (b) s += `\n### ${ws}/CONTEXT.md ## Current state\n${b.trim()}\n`; }
+    if (fs.existsSync(ctx)) { const b = writer.sectionBody(readText(ctx), 'Current state'); if (b) s += `\n### ${ws}/CONTEXT.md ## Current state\n${b.trim()}\n`; }
     if (fs.existsSync(lrn)) {
-      const t = fs.readFileSync(lrn, 'utf8');
+      const t = readText(lrn);
       for (const h of ['Active Learnings', 'Candidates']) { const b = writer.sectionBody(t, h); if (b && b.trim()) s += `\n### ${ws}/LEARNINGS.md ## ${h}\n${b.trim()}\n`; }
     }
   }
@@ -247,7 +252,8 @@ function claudeBin() {
 function runModel(root, prompt) {
   const args = ['-p', '--model', MODEL, '--tools', '', '--system-prompt', SYSTEM, '--output-format', 'json',
     '--no-session-persistence', '--setting-sources', 'local', '--strict-mcp-config', '--max-turns', '1'];
-  const r = spawnSync(claudeBin(), args, { cwd: root, input: prompt, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 240_000 });
+  const bin = claudeBin(); const js = bin.endsWith('.js'); // a .js stub (test seam) runs under node
+  const r = spawnSync(js ? process.execPath : bin, js ? [bin, ...args] : args, { cwd: root, input: prompt, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 240_000 });
   // Failed call (spawn error, timeout, non-JSON): no usage reported, so charge the prompt size (≈ chars/4).
   const failed = error => ({ tokens: Math.ceil(prompt.length / 4), cost: 0, ms: 0, turns: 0, usage: null, proposal: null, error });
   if (r.error) return failed(`claude call failed: ${r.error.message}`);
@@ -322,17 +328,25 @@ function verify(proposal, delta, wss = null) {
   return { proposal: p, rejected };
 }
 
-// Exclusive lock. A lock older than 10 min is stale (crashed worker): removed once, then retried.
+// Exclusive lock. A lock older than 10 min is stale (crashed worker): moved away once, then retried.
 function acquireLock(lock) {
+  const stale = f => Date.now() - fs.statSync(f).mtimeMs > 10 * 60 * 1000;
   for (let attempt = 0; attempt < 2; attempt++) {
     try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); return true; } catch {}
-    try { if (Date.now() - fs.statSync(lock).mtimeMs > 10 * 60 * 1000) { fs.unlinkSync(lock); continue; } } catch { continue; }
-    return false;
+    try {
+      if (!stale(lock)) return false;
+      // Rename is atomic: of two workers that both saw the lock stale, only one moves it away (the other's rename throws).
+      const mine = `${lock}.${process.pid}.stale`;
+      fs.renameSync(lock, mine);
+      // Between stat and rename another worker may have put a fresh lock there: give it back, stay out.
+      if (!stale(mine)) { try { fs.writeFileSync(lock, fs.readFileSync(mine), { flag: 'wx' }); } catch {} fs.unlinkSync(mine); return false; }
+      fs.unlinkSync(mine);
+    } catch {}
   }
   return false;
 }
 
-module.exports = { verify, hasSignal, alert, deltaFor, acquireLock, render };
+module.exports = { verify, hasSignal, alert, deltaFor, acquireLock, render, memorySnapshot };
 if (require.main === module) main();
 
 function main() {
@@ -400,11 +414,13 @@ function main() {
       batch.push({ e, d });
     }
     requeue(waiting);
+    q = batch.map(b => b.e); // from here the outer catch puts back only the batch: `waiting` is already queued
     if (!batch.length) { fs.writeFileSync(path.join(STATE, 'last-run'), String(Date.now())); return; }
 
     // One call for the whole project. If the per-run cap forces a cut, the cut delta is re-read next run (cursor = cut line).
     const per = Math.floor(MAX_PROMPT_DELTA / batch.length);
-    for (const b of batch) if (b.d.text.length > per) { b.d = deltaFor(b.e.transcript_path, path.join(STATE, 'cursors', `${b.e.session_id}.json`), per) || b.d; }
+    // A cut with no signal in it (text null) keeps the uncut delta: never "null" in the prompt.
+    for (const b of batch) if (b.d.text.length > per) { const cut = deltaFor(b.e.transcript_path, path.join(STATE, 'cursors', `${b.e.session_id}.json`), per); if (cut?.text) b.d = cut; }
     const delta = batch.map(({ e, d }) => `=== SESSION ${e.session_id} ===\n${d.text}`).join('\n');
     const wss = workspaces(root);
     const t0 = Date.now();
@@ -423,14 +439,17 @@ function main() {
     log(`${ids.map(i => i.slice(0, 8)).join('+')}: delta ${delta.length} chars → ${res.tokens} tokens, $${res.cost.toFixed(3)} list, ${Math.round((Date.now() - t0) / 1000)}s, ${res.turns} turn(s), ${rejected} item(s) rejected (evidence/workspace)`);
     if (DRY) { console.log(JSON.stringify(ok, null, 2)); console.log(`[dry-run] tokens=${res.tokens} cost=$${res.cost.toFixed(3)} ms=${res.ms} rejected=${rejected}`); return; }
     const done = writer.apply(root, ok, ids);
+    q = []; // written: a throw from here on must not replay (and pay) the batch again
     // Deterministic hygiene, no model: expired candidates / proposals go to their archive sections.
     try { done.push(...writer.expire(root, wss)); } catch (e) { log(`expire failed: ${e.message}`); }
     const errors = done.filter(d => / error: /.test(d));
     // Inbox count for the passive surfaces (statusline ✉, hub). The session drains it through scribe-trigger.js --inbox.
-    const pending = writer.countPending(root, wss);
-    const ageDays = pending.oldest ? Math.floor((Date.now() - Date.parse(pending.oldest)) / 86400000) : 0;
-    pending.total = pending.proposals + pending.candidates; pending.ageDays = ageDays; pending.alert = pending.total > 0;
-    try { fs.writeFileSync(path.join(STATE, 'pending.json'), JSON.stringify({ ...pending, ts: Date.now() })); } catch {}
+    try {
+      const pending = writer.countPending(root, wss);
+      const ageDays = pending.oldest ? Math.floor((Date.now() - Date.parse(pending.oldest)) / 86400000) : 0;
+      pending.total = pending.proposals + pending.candidates; pending.ageDays = ageDays; pending.alert = pending.total > 0;
+      fs.writeFileSync(path.join(STATE, 'pending.json'), JSON.stringify({ ...pending, ts: Date.now() }));
+    } catch (e) { log(`pending count failed: ${e.message}`); }
     journal({ sessions: batch.map(({ e, d }) => ({ id: e.session_id, from: d.from, to: d.line, partial: d.partial })), tokens: res.tokens, rejected, applied: done, proposal: ok });
     if (errors.length) retryOrGiveUp('apply errors', errors); // writer failed on part of the proposal
     else {

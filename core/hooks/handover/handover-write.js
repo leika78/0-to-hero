@@ -83,7 +83,7 @@ function extract(transcriptPath) {
           if (b.type === 'tool_result' && b.is_error === true) {
             const txt = typeof b.content === 'string'
               ? b.content
-              : JSON.stringify(b.content);
+              : JSON.stringify(b.content ?? '');   // no content field: undefined would throw on .slice
             out.errors.push(txt.slice(0, MAX_ERR_CHARS));
           }
         }
@@ -103,7 +103,9 @@ process.stdin.on('end', () => {
     const data = JSON.parse(input);
     const sessionId = data.session_id;
     const transcript = data.transcript_path;
-    const cwd = data.cwd || process.cwd();
+    // The session's start folder, not the hook cwd: after a Bash `cd` into a sub-folder the CLAUDE.md guard
+    // below would skip the record, or write it to a folder neither handover-read.js nor /memorise reads.
+    const cwd = process.env.CLAUDE_PROJECT_DIR || data.cwd || process.cwd();
     const trigger = data.trigger || 'unknown';
 
     if (!sessionId || !transcript) process.exit(0);

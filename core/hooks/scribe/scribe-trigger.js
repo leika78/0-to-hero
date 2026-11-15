@@ -69,7 +69,11 @@ process.stdin.on('end', () => {
       if (j.hook_event_name !== 'Stop' || j.stop_hook_active || process.env.CLAUDE_CODE_SESSION_ATTENDED !== '1') process.exit(0);
       const mark = path.join(dir, `inbox-${j.session_id}`);
       if (fs.existsSync(mark)) process.exit(0);
-      const p = JSON.parse(fs.readFileSync(path.join(dir, 'pending.json'), 'utf8'));   // absent (just drained) → catch → exit 0
+      // Counted fresh from the memory files, never from pending.json: that snapshot is only rewritten after a
+      // worker model call, so a drain that ends in "do nothing" would leave it stale and block every later session.
+      const wss = fs.readdirSync(cwd, { withFileTypes: true }).filter(d => d.isDirectory() && fs.existsSync(path.join(cwd, d.name, 'AGENT.md'))).map(d => d.name);
+      const p = require('./scribe-writer.js').countPending(cwd, wss);
+      p.total = p.proposals + p.candidates;
       const age = p.oldest ? Math.floor((Date.now() - Date.parse(p.oldest)) / 86400000) : 0;
       if (!(p.total >= INBOX_MIN || (p.total > 0 && age >= INBOX_DAYS))) process.exit(0);
       fs.writeFileSync(mark, '');

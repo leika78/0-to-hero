@@ -115,7 +115,9 @@ layout=""
 if [[ -f "${cwd}/CLAUDE.md" ]]; then
     while IFS= read -r agent_file; do
         ws_name="$(basename "$(dirname "${agent_file}")")"
-        if ! grep -qE "(^|[^[:alnum:]_-])${ws_name}([^[:alnum:]_-]|$)" "${cwd}/CLAUDE.md"; then
+        # Escape regex metacharacters: "Verificator 2.0" must not match "Verificator 2x0", "a(b" must not crash grep.
+        ws_re="$(printf '%s' "${ws_name}" | sed 's/[][\.*^$+?(){}|/]/\\&/g')"
+        if ! grep -qE "(^|[^[:alnum:]_-])${ws_re}([^[:alnum:]_-]|$)" "${cwd}/CLAUDE.md"; then
             layout+=$'\n- ⚠ workspace `'"${ws_name}"$'` has an AGENT.md but is not referenced in CLAUDE.md — add it to ## Structure / Routing, or it gets missed.'
         fi
     done < <(find "${cwd}" -maxdepth 2 -name "AGENT.md" -type f -not -path "*/node_modules/*" -not -path "*/.git/*")
@@ -143,12 +145,20 @@ fi
 if [[ -n "${ledger}" ]]; then
     header=$'# Ledger (recent)\n\nNewest dated decisions and events. Older ones in DECISIONS.md ## Ledger; grep it before asserting a fact of record.\n'
     trimmed=0
-    while [[ $(( ${#context} + ${#header} + ${#ledger} )) -gt ${MAX_CHARS} && -n "${ledger}" ]]; do
+    # Set the awk "- (N older entries not injected…)" note aside: it starts with "- " too, and would be trimmed first as if it were an entry.
+    note=""
+    if [[ "${ledger##*$'\n'}" == "- ("* ]]; then
+        note=$'\n'"${ledger##*$'\n'}"
+        if [[ "${ledger}" == *$'\n'* ]]; then ledger="${ledger%$'\n'*}"; else ledger=""; note="${note#$'\n'}"; fi
+    fi
+    while [[ $(( ${#context} + ${#header} + ${#ledger} + ${#note} )) -gt ${MAX_CHARS} && -n "${ledger}" ]]; do
         # Drop the last ledger entry (oldest of the injected window). Entries are "- " lines; a
         # continuation line is dropped with the entry it belongs to.
         ledger="$(printf '%s\n' "${ledger}" | awk '/^- /{n++} {l[NR]=$0; e[NR]=n} END{for(i=1;i<=NR;i++) if(e[i]<n) print l[i]}')"
         trimmed=$((trimmed + 1))
     done
+    [[ -z "${ledger}" ]] && note="${note#$'\n'}"
+    ledger+="${note}"
     if [[ ${trimmed} -gt 0 ]]; then
         ledger+=$'\n- ('"${trimmed}"$' older entries of the injected window trimmed to fit the 10k-char hook cap - full ledger in DECISIONS.md ## Ledger; grep it before asserting a fact of record)'
     fi

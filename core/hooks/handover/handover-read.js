@@ -34,7 +34,7 @@ const SANITY_LIMIT = 120000; // ~30k tokens. A runaway guard, not a budget.
 // older belongs to a session the user has already walked away from, and
 // injecting it would hand the new session someone else's context.
 // Override for a slow workflow: ZTH_HANDOVER_WINDOW_MIN.
-const WINDOW_MIN = parseInt(process.env.ZTH_HANDOVER_WINDOW_MIN || '15', 10);
+const WINDOW_MIN = parseInt(process.env.ZTH_HANDOVER_WINDOW_MIN, 10) || 15;
 const AGE_LIMIT_MS = WINDOW_MIN * 60 * 1000;
 
 function slugify(cwd) {
@@ -44,7 +44,7 @@ function slugify(cwd) {
 // The "## Manual handover" blocks of a file, oldest first. A block ends at the
 // next top-level block (another handover or a PreCompact "## Compaction").
 function handoverBlocks(text) {
-  return text.split(/^(?=## (?:Manual handover|Compaction) )/m)
+  return text.replace(/^﻿/, '').split(/^(?=## (?:Manual handover|Compaction) )/m)
     .filter(b => b.startsWith('## Manual handover'))
     .map(b => b.trim());
 }
@@ -62,7 +62,8 @@ process.stdin.on('end', () => {
     // would otherwise silently double-inject after every compaction.
     if (data.source && data.source !== 'clear') process.exit(0);
 
-    const cwd = data.cwd || process.cwd();
+    // The session's start folder, not the hook cwd: a Bash `cd` drifts the cwd into a sub-folder.
+    const cwd = process.env.CLAUDE_PROJECT_DIR || data.cwd || process.cwd();
     const dir = path.join(HANDOVER_ROOT, slugify(cwd));
     if (!fs.existsSync(dir)) process.exit(0);
 

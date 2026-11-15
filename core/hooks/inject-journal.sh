@@ -44,7 +44,8 @@ slug="$(printf '%s' "${native}" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//; s/-*$//' | t
 state_dir="$(find "${HOME}/.claude/scribe" -maxdepth 1 -mindepth 1 -type d -iname "${slug}" 2>/dev/null | head -1 || true)"
 unread=0
 if [[ -n "${state_dir}" && -f "${state_dir}/queue.jsonl" ]]; then
-    unread="$(grep -c . "${state_dir}/queue.jsonl" 2>/dev/null || echo 0)"
+    unread="$(grep -c . "${state_dir}/queue.jsonl" 2>/dev/null || true)"   # grep -c already prints 0 on no match
+    unread="${unread:-0}"
 fi
 if [[ -n "${last}" ]]; then
     coverage="History covered up to ${last}"

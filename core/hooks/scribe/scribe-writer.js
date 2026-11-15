@@ -72,6 +72,11 @@ function similar(a, b) {
 
 const STATE_KEEP_DAYS = 7;
 const daysAgo = d => Math.floor((Date.now() - Date.parse(d)) / 86400000);
+// A block tag is the '+'-joined 8-char ids of the batch that wrote it. A block whose tag shares an id with the batch being
+// applied is that session's block: replaced, its new tag the union (run on A+B, then on A alone → still one block).
+const batchIds = sessions => sessions.length ? sessions.map(i => String(i).slice(0, 8)) : ['manual'];
+const shares = (tag, ids) => tag.split('+').some(i => ids.includes(i));
+const unionTag = (tags, ids) => [...new Set([...tags.flatMap(t => t.split('+')), ...ids])].join('+');
 // ## Current state holds one block per session ("Updated: <date> (scribe, session <id8>)…"). The session being
 // applied replaces its own block; blocks of other sessions younger than STATE_KEEP_DAYS stay, so two sessions working
 // the same workspace in parallel do not erase each other. A block without a session tag (legacy / written by hand) is dropped.
@@ -83,13 +88,12 @@ function applyState(root, s, sessions = []) {
   const text = readText(file);
   const old = sectionBody(text, 'Current state');
   if (old === null) return `state error: no ## Current state in ${s.workspace}/CONTEXT.md`;
-  const tag = sessions.map(i => String(i).slice(0, 8)).join('+') || 'manual';
+  const ids = batchIds(sessions);
+  const blocks = old.split(/\n(?=Updated: )/).map(b => b.trim()).map(b => [b, b.match(/^Updated: (\d{4}-\d{2}-\d{2}) \(scribe, session ([^)]+)\)/)]);
+  const kept = blocks.filter(([, m]) => m && !shares(m[2], ids) && daysAgo(m[1]) < STATE_KEEP_DAYS).map(([b]) => b);
+  const tag = unionTag(blocks.filter(([, m]) => m && shares(m[2], ids)).map(([, m]) => m[2]), ids);
   const lines = s.lines.slice(0, 5).map(l => String(l).replace(/\n/g, ' ').trim()).filter(Boolean);
   const mine = `Updated: ${today()} (scribe, session ${tag}). ${lines.join('\n')}${s.next ? `\nNext: ${String(s.next).replace(/\n/g, ' ').trim()}` : ''}`;
-  const kept = old.split(/\n(?=Updated: )/).map(b => b.trim()).filter(b => {
-    const m = b.match(/^Updated: (\d{4}-\d{2}-\d{2}) \(scribe, session ([^)]+)\)/);
-    return m && m[2] !== tag && daysAgo(m[1]) < STATE_KEEP_DAYS;
-  });
   atomicWrite(file, replaceSection(text, 'Current state', `\n${[mine, ...kept].join('\n\n')}\n`));
   return `${s.workspace} state updated`;
 }
@@ -102,15 +106,17 @@ function applyJournal(root, j, sessions = [], events = []) {
   const did = (Array.isArray(j?.did) ? j.did : []).slice(0, 4).map(l => clip(String(l).replace(/\n/g, ' ').trim(), 220)).filter(Boolean);
   const evs = events.map(e => `- ${/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : today()} — ${clip(String(e.text || '').replace(/\n/g, ' ').trim(), MAX_FACT)} [${clip(String(e.evidence || '').replace(/[\[\]\n]/g, ' ').trim(), 80)}]${e.why ? ` why: ${clip(String(e.why).replace(/\n/g, ' ').trim(), 160)}` : ''}`).filter(l => !l.includes('—  ['));
   if (!did.length && !evs.length) return null;
-  const tag = sessions.map(i => String(i).slice(0, 8)).join('+') || 'manual';
+  const ids = batchIds(sessions);
   const file = path.join(root, 'JOURNAL.md');
   let text = fs.existsSync(file) ? readText(file) : JOURNAL_HEADER;
-  const head = `### ${today()} — session ${tag}`;
   // Blocks start at "### "; the one of this session (any date) is replaced, so a re-run restates rather than duplicates.
   const blocks = text.split(/\n(?=### )/);
   const header = blocks.shift();
-  const rest = blocks.filter(b => !b.startsWith(`### `) || !new RegExp(`^### \\d{4}-\\d{2}-\\d{2} — session ${tag.replace(/[+]/g, '\\+')}(\\n|$)`).test(b));
-  const prev = blocks.find(b => new RegExp(`^### \\d{4}-\\d{2}-\\d{2} — session ${tag.replace(/[+]/g, '\\+')}(\\n|$)`).test(b)) || '';
+  const tagOf = b => (b.match(/^### \d{4}-\d{2}-\d{2} — session (\S+)/) || [])[1];
+  const own = blocks.filter(b => tagOf(b) && shares(tagOf(b), ids));
+  const rest = blocks.filter(b => !own.includes(b));
+  const prev = own.join('\n');
+  const head = `### ${today()} — session ${unionTag(own.map(tagOf), ids)}`;
   // Events accumulate across the runs of one session (they are dated facts); summary lines are replaced (they restate).
   const oldEvents = prev.split('\n').filter(l => /^- \d{4}-\d{2}-\d{2} — /.test(l) && !evs.some(e => normFact(e) === normFact(l)));
   const block = [head, ...did.map(l => `- ${l}`), ...(j?.next ? [`- Next: ${clip(String(j.next).replace(/\n/g, ' ').trim(), 220)}`] : []), ...oldEvents, ...evs].join('\n');
@@ -305,10 +311,11 @@ function applyCandidate(root, c) {
   const owner = c.owner_correction && String(c.owner_correction).trim().length >= 8 ? String(c.owner_correction).replace(/\n/g, ' ').trim() : null;
   // Already a rule in Active / Archived / Candidates? (Drift log lines are an audit trail, never a rule to bump.)
   const all = text.split('\n');
-  const drift = sectionRange(all, 'Drift log'), cand = sectionRange(all, 'Candidates');
+  const drift = sectionRange(all, 'Drift log'), cand = sectionRange(all, 'Candidates'), arch = sectionRange(all, 'Archived Learnings');
   const inRange = (i, r) => r && i >= r[0] && i < r[1];
   const idx = all.findIndex((l, i) => l.startsWith('- ') && !inRange(i, drift) && (norm(l).includes(norm(rule).slice(0, 60)) || similar(l.slice(2), rule)));
-  if (idx >= 0 && !(owner && inRange(idx, cand))) {
+  // The owner's correction activates a queued or an archived rule; only an Active match just gets the evidence.
+  if (idx >= 0 && !(owner && (inRange(idx, cand) || inRange(idx, arch)))) {
     if (all[idx].includes(c.incident)) return null;              // same incident restated
     // No counter: a repeat adds its evidence id and the date it was last seen; repetition never changes a rule's authority.
     all[idx] = all[idx].replace(/ \(last seen \d{4}-\d{2}-\d{2}\)/, '') + ` [${c.incident}] (last seen ${today()})`;
@@ -324,7 +331,7 @@ function applyCandidate(root, c) {
     if (body === null) return `candidate error: no ## Active Learnings in ${c.workspace}/LEARNINGS.md`;
     const out = replaceSection(text, 'Active Learnings', body.replace(/\s*$/, '') + `\n- ${rule} (owner ${today()}: « ${owner} ») [${c.incident}]${carried ? ' ' + carried : ''}`);
     atomicWrite(file, out);
-    return `${c.workspace} +1 ACTIVE (owner correction${carried ? ', promoted from candidates' : ''})`;
+    return `${c.workspace} +1 ACTIVE (owner correction${carried ? `, promoted from ${inRange(idx, arch) ? 'archive' : 'candidates'}` : ''})`;
   }
   const body = sectionBody(text, 'Candidates');
   const out = replaceSection(text, 'Candidates', body.replace(/\s*$/, '') + `\n- ${rule} (${today()}) [${c.incident}]`);
@@ -464,6 +471,26 @@ if (require.main === module && process.argv.includes('--selftest')) {
   const j2 = fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8');
   assert.strictEqual((j2.match(/^### /gm) || []).length, 1, 'CRLF journal: block replaced: ' + JSON.stringify(j2));
   assert(j2.includes('- new\r\n') && !j2.includes('- old'), 'CRLF journal: new summary: ' + JSON.stringify(j2));
+  // A batch tag (A+B) is the block of A and of B: a later run on A alone replaces it (union tag), never a second block.
+  fs.writeFileSync(path.join(r2, 'JOURNAL.md'), '# Journal\n\n### 2026-01-01 — session aaaa+bbbb\n- old ab\n');
+  apply(r2, { summary: { did: ['A alone'] } }, ['aaaa']);
+  const j3 = fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8');
+  assert.strictEqual((j3.match(/^### /gm) || []).length, 1, 'batch tag: one block: ' + j3);
+  assert(j3.includes(`### ${old(0)} — session aaaa+bbbb\n- A alone\n`) && !j3.includes('old ab'), 'batch tag: union tag, new summary: ' + j3);
+  apply(r2, { summary: { did: ['C'] } }, ['cccc']);
+  assert.strictEqual((fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8').match(/^### /gm) || []).length, 2, 'disjoint batch: its own block');
+  fs.mkdirSync(path.join(r2, 'w'));
+  fs.writeFileSync(path.join(r2, 'w', 'CONTEXT.md'), `## Current state\n\nUpdated: ${old(1)} (scribe, session aaaa+bbbb). old ab\n\n## Thread\n`);
+  apply(r2, { state: [{ workspace: 'w', lines: ['A alone'], evidence: ['toolu_1'] }] }, ['bbbb']);
+  assert.strictEqual(sectionBody(fs.readFileSync(path.join(r2, 'w', 'CONTEXT.md'), 'utf8'), 'Current state'), `\nUpdated: ${old(0)} (scribe, session aaaa+bbbb). A alone\n\n`, 'batch tag: one state block, union tag');
+  // Owner correction on an archived rule: moved to Active (evidence carried), gone from Archived.
+  fs.writeFileSync(path.join(r2, 'w', 'LEARNINGS.md'), '# w/ — Learnings\n\n## Active Learnings\n\n## Candidates\n\n## Archived Learnings\n- NEVER push on Friday evening (risk) (2026-01-01) [toolu_a] (expired 2026-02-01)\n\n## Drift log\n');
+  const done3 = apply(r2, { candidates: [{ workspace: 'w', rule: 'NEVER push on Friday evening (risk)', incident: 'toolu_b', owner_correction: 'non, jamais le vendredi soir' }] });
+  const l5 = fs.readFileSync(path.join(r2, 'w', 'LEARNINGS.md'), 'utf8');
+  assert.deepStrictEqual(done3, ['w +1 ACTIVE (owner correction, promoted from archive)']);
+  assert.strictEqual(dash(l5, 'Active Learnings'), 1, 'archived rule activated: ' + l5);
+  assert.strictEqual(dash(l5, 'Archived Learnings'), 0, 'archived line gone: ' + l5);
+  assert(sectionBody(l5, 'Active Learnings').includes('[toolu_b] [toolu_a]'), 'evidence carried: ' + l5);
   fs.rmSync(r2, { recursive: true, force: true });
   console.log('selftest OK:', done.join(' · '));
 }

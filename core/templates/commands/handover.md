@@ -16,7 +16,7 @@ There is no exclusion list. The only thing forbidden is vagueness.
 
 ## Where it goes
 
-Append to `~/.claude/handovers/<cwd-slugified>/<session_id>.md` — the same file the `PreCompact` hook writes, so `/memorise` finds everything in one place. The slug is the project cwd with every non-alphanumeric character replaced by `-` (e.g. `D:/CLAUDE/project 0 to Hero` → `D--CLAUDE-project-0-to-Hero`). Create the directory if missing.
+Append to `~/.claude/handovers/<cwd-slugified>/<session_id>.md` — the same file the `PreCompact` hook writes, so `/memorise` finds everything in one place. The slug is the project folder the session started in (not a sub-folder you `cd`-ed into) with every non-alphanumeric character replaced by `-`, leading and trailing `-` trimmed (e.g. `/home/u/proj` → `home-u-proj`, `D:/CLAUDE/project 0 to Hero` → `D--CLAUDE-project-0-to-Hero`). Create the directory if missing.
 
 Never write into the repo: these are scratch files, and one committed by accident is noise in someone else's diff. If you cannot determine the session id, use the transcript filename (it IS the session id), else `manual-<YYYY-MM-DD-HHMM>.md`.
 

@@ -100,6 +100,14 @@ assert.ok(acquireLock(lock), 'first lock acquired');
 assert.ok(!acquireLock(lock), 'second acquisition refused while fresh');
 const old = new Date(Date.now() - 11 * 60 * 1000); fs.utimesSync(lock, old, old);
 assert.ok(acquireLock(lock), 'stale lock (>10 min) is taken over');
+assert.strictEqual(acquireLock(lock), false, 'taken over once: the new lock is fresh, a second worker stays out');
+assert.deepStrictEqual(fs.readdirSync(tmp).filter(f => f.endsWith('.stale')), [], 'the moved-away stale lock is removed');
+
+// memorySnapshot: a JOURNAL block tagged "aaaa1111+bbbb2222" (earlier merged run) is found for a run with aaaa1111 alone; CRLF normalised.
+const { memorySnapshot } = require('./scribe-worker.js');
+const jroot = path.join(tmp, 'jroot'); fs.mkdirSync(jroot);
+fs.writeFileSync(path.join(jroot, 'JOURNAL.md'), '# Journal\r\n\r\n### 2026-01-01 — session aaaa1111+bbbb2222\r\n- old line\r\n\r\n### 2026-01-02 — session cccc3333\r\n- other\r\n');
+assert.strictEqual(memorySnapshot(jroot, ['.'], '', ['aaaa1111-0000']), '\n### JOURNAL.md — what was already summarised for this session (restate it whole, updated)\n### 2026-01-01 — session aaaa1111+bbbb2222\n- old line\n', 'merged-tag block found by one of its ids, CRLF stripped');
 
 // A failed model call (spawn error: the binary does not exist) is charged to the budget and counted
 // like a failed apply: after MAX_APPLY_FAILURES (3) runs the delta is given up, no longer re-queued.
@@ -123,5 +131,30 @@ assert.strictEqual(lines('usage.jsonl').length, 3, 'every failed call charged');
 assert.strictEqual(lines('queue.jsonl').length, 0, 'given up after 3 failures: not re-queued');
 assert.ok(!fs.existsSync(path.join(st, 'fail-s1')), 'failure counter cleared on give-up');
 assert.strictEqual(JSON.parse(lines('cursors/s1.json')[0]).line, 1, 'cursor advanced past the failing delta');
+
+// A successful model call, stubbed: a node script that saves the prompt and answers an empty proposal.
+const stub = path.join(tmp, 'stub-claude.js'); const promptFile = path.join(tmp, 'prompt.txt');
+fs.writeFileSync(stub, `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(promptFile)}, fs.readFileSync(0, 'utf8'));
+console.log(JSON.stringify({ result: JSON.stringify({ state: [], summary: null, facts: [], log: [], fixes: [], candidates: [], skipped_reason: 'stub' }), usage: { input_tokens: 10, output_tokens: 1 } }));`);
+const stubEnv = { ...env, SCRIBE_CLAUDE_BIN: stub };
+const runAs = s => spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), s], { env: stubEnv, encoding: 'utf8' });
+const stateOf = s => { const d = path.join(home, '.claude', 'scribe', s); fs.mkdirSync(path.join(d, 'cursors'), { recursive: true }); return d; };
+const queue = (s, ids) => fs.writeFileSync(path.join(stateOf(s), 'queue.jsonl'), ids.map(([id, t]) => JSON.stringify({ session_id: id, transcript_path: t, cwd: proj, flush: true, ts: Date.now() })).join('\n') + '\n');
+const asst = c => JSON.stringify({ type: 'assistant', message: { content: c } });
+const edit = asst([{ type: 'tool_use', id: 'toolu_e1', name: 'Edit', input: { file_path: 'a.ts' } }]);
+
+// Per-run cap cut with no signal in the cut part: the uncut delta is sent, never "null".
+const trA = path.join(tmp, 'ta.jsonl'); fs.writeFileSync(trA, [...Array(25)].map(() => asst([{ type: 'text', text: 'q'.repeat(1400) }])).concat(edit).join('\n') + '\n');
+const trB = path.join(tmp, 'tb.jsonl'); fs.writeFileSync(trB, edit + '\n');
+queue('cut', [['sa', trA], ['sb', trB], ['sc', trB]]);
+runAs('cut');
+assert.strictEqual(/=== SESSION sa ===\nnull/.test(fs.readFileSync(promptFile, 'utf8')), false, 'a signal-less cut never puts "null" in the prompt');
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('cut'), 'cursors', 'sa.json'), 'utf8')).line, 26, 'uncut delta sent and acknowledged whole');
+
+// A throw after the writer applied (here: the cursor path is a directory) must not re-queue the batch (replay = paid twice).
+queue('post', [['p1', trB]]); fs.mkdirSync(path.join(stateOf('post'), 'cursors', 'p1.json'));
+runAs('post');
+const postQ = path.join(stateOf('post'), 'queue.jsonl');
+assert.strictEqual(fs.existsSync(postQ) ? fs.readFileSync(postQ, 'utf8') : '', '', 'applied batch not re-queued by the outer catch');
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-worker.check: ok');

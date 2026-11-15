@@ -9,10 +9,10 @@ const { execFileSync } = require('child_process');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hr-'));
 const dir = path.join(home, '.claude', 'handovers', 'D--p-q');
 fs.mkdirSync(dir, { recursive: true });
-const run = (source = 'clear') => {
+const run = (source = 'clear', cwd = 'D:\\p q', projectDir = '') => {
   const out = execFileSync(process.execPath, [path.join(__dirname, 'handover-read.js')], {
-    input: JSON.stringify({ source, cwd: 'D:\\p q' }),
-    env: { ...process.env, USERPROFILE: home, HOME: home },
+    input: JSON.stringify({ source, cwd }),
+    env: { ...process.env, USERPROFILE: home, HOME: home, CLAUDE_PROJECT_DIR: projectDir },
   }).toString();
   return out ? JSON.parse(out).hookSpecificOutput.additionalContext : '';
 };
@@ -67,6 +67,13 @@ assert.ok(!fs.existsSync(`${e}.consumed`) && !fs.existsSync(`${f}.consumed`), 'n
 fs.rmSync(f);
 ctx = run();
 assert.ok(ctx.includes('body 6') && fs.existsSync(`${e}.consumed`), 'single fresh one injected');
+
+// A BOM (PowerShell Out-File) does not hide the first block; a `cd` drift does not move the folder.
+const g = path.join(dir, 'g.md');
+fs.writeFileSync(g, '\uFEFF' + block(8).replace('t8', iso(1000)));
+assert.strictEqual(run('clear', 'D:\\p q\\sub'), '', 'drifted cwd alone finds nothing');
+ctx = run('clear', 'D:\\p q\\sub', 'D:\\p q');
+assert.ok(ctx.includes('body 8'), 'CLAUDE_PROJECT_DIR wins over the drifted cwd, BOM block found');
 
 fs.rmSync(home, { recursive: true, force: true });
 console.log('handover-read: all checks pass');
