@@ -68,29 +68,51 @@ process.stdin.on('end', () => {
 
     // Only a file holding a written handover is a resume point: a file with
     // nothing but PreCompact breadcrumbs is evidence for /memorise, not state.
-    const file = fs.readdirSync(dir)
+    // Age = the newest manual block's own header time, not the file mtime: a
+    // PreCompact append bumps the mtime and would make an old handover look fresh.
+    // The mtime is only the fallback for a header without a parsable ISO time.
+    const candidates = fs.readdirSync(dir)
       .filter(f => f.endsWith('.md'))
       .map(f => {
         const full = path.join(dir, f);
-        try { return { full, mtime: fs.statSync(full).mtimeMs }; } catch { return null; }
+        try {
+          const blocks = handoverBlocks(fs.readFileSync(full, 'utf8'));
+          if (!blocks.length) return null;
+          const head = blocks[blocks.length - 1].match(/^## Manual handover — (\S+)/);
+          const at = head && Date.parse(head[1]);
+          return { full, blocks, time: Number.isFinite(at) ? at : fs.statSync(full).mtimeMs };
+        } catch { return null; }
       })
       .filter(Boolean)
-      .sort((a, b) => b.mtime - a.mtime)
       // Stale handovers describe work the user has moved on from.
-      .filter(f => Date.now() - f.mtime <= AGE_LIMIT_MS)
-      .map(f => ({ ...f, blocks: handoverBlocks(fs.readFileSync(f.full, 'utf8')) }))
-      .find(f => f.blocks.length);
-    if (!file) process.exit(0);
+      .filter(f => Date.now() - f.time <= AGE_LIMIT_MS)
+      // Inject once. A second /clear in the same window would otherwise re-inject
+      // a handover the running session has already absorbed. The marker is a
+      // sibling file so the handover itself stays untouched for /memorise.
+      .filter(f => {
+        try { return !(fs.statSync(f.full + '.consumed').mtimeMs >= f.time); } catch { return true; }
+      })
+      .sort((a, b) => b.time - a.time);
+    if (!candidates.length) process.exit(0);
 
-    // Inject once. A second /clear in the same window would otherwise re-inject
-    // a handover the running session has already absorbed — and re-reading a
-    // stale state as if it were current is worse than injecting nothing.
-    // The marker is a sibling file so the handover itself stays untouched for
-    // /memorise, which reads it later and does the purging.
+    // Two fresh handovers = two sessions on this project; the new session_id
+    // cannot say which one was cleared. Picking one would hand this session the
+    // other's state and consume it under its owner: list them, consume none.
+    if (candidates.length > 1) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext:
+            '# Handovers waiting\n\nThe session was cleared and several recent handovers exist ' +
+            '(parallel sessions on this project). None was injected. If the user\'s request ' +
+            'continues earlier work, read the one that matches it:\n' +
+            candidates.map(f => `- ${f.full} (${new Date(f.time).toISOString()})`).join('\n') + '\n',
+        },
+      }));
+      return;
+    }
+    const file = candidates[0];
     const consumed = file.full + '.consumed';
-    try {
-      if (fs.existsSync(consumed) && fs.statSync(consumed).mtimeMs >= file.mtime) process.exit(0);
-    } catch { /* unreadable marker: inject */ }
 
     // Only the newest block: it is the current state, and each block stands on
     // its own. Earlier blocks stay in the file for /memorise.

@@ -24,27 +24,33 @@ const today = () => new Date().toISOString().slice(0, 10);
 // Read-modify-write race with the session (an Edit by /memorise between our read and our rename
 // would be lost): remember the mtime at read, refuse the write if the file moved, apply() retries once.
 const readAt = new Map();
+// CRLF files are worked on as LF (every regex below assumes \n) and written back CRLF.
+const crlf = new Set();
 function readText(file) {
   readAt.set(file, fs.statSync(file).mtimeMs);
-  return fs.readFileSync(file, 'utf8');
+  const t = fs.readFileSync(file, 'utf8');
+  if (t.includes('\r\n')) crlf.add(file); else crlf.delete(file);
+  return t.replace(/\r\n/g, '\n');
 }
 class RaceError extends Error { constructor(file) { super(`${path.basename(file)} changed under us`); this.race = true; } }
 function atomicWrite(file, text) {
   if (readAt.has(file) && fs.existsSync(file) && fs.statSync(file).mtimeMs !== readAt.get(file)) throw new RaceError(file);
   const tmp = file + '.scribe-tmp';
-  fs.writeFileSync(tmp, text, 'utf8');
+  fs.writeFileSync(tmp, crlf.has(file) ? text.replace(/\n/g, '\r\n') : text, 'utf8');
   fs.renameSync(tmp, file);
   readAt.delete(file);
 }
 
+// `## <heading>` exactly, or followed by one "(…)" note ("## Facts (current)"): "## Proposals archive" is not "## Proposals".
+const headRe = heading => `^## ${heading}(?: \\([^)\\n]*\\))?[ \\t\\r]*\\n`;
 // Replace the body of `## <heading>` (up to the next "## " or EOF). Returns null if the heading is absent.
 function replaceSection(text, heading, body) {
-  const re = new RegExp(`(^## ${heading}[^\\n]*\\n)([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm');
+  const re = new RegExp(`(${headRe(heading)})([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm');
   if (!re.test(text)) return null;
   return text.replace(re, (_, h) => h + body.replace(/\s*$/, '') + '\n\n');
 }
 function sectionBody(text, heading) {
-  const m = text.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm'));
+  const m = text.match(new RegExp(`${headRe(heading)}([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm'));
   return m ? m[1] : null;
 }
 // Rule normalisation drops the ×N counter and dates; fact normalisation keeps digits (a changed number is a different fact).
@@ -253,7 +259,7 @@ function expire(root, wss = []) {
 function countPending(root, wss = []) {
   const count = (file, heading) => {
     if (!fs.existsSync(file)) return [];
-    const b = sectionBody(fs.readFileSync(file, 'utf8'), heading) || '';
+    const b = sectionBody(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n'), heading) || '';
     return b.split('\n').filter(l => l.startsWith('- '));
   };
   const proposals = count(path.join(root, 'DECISIONS.md'), 'Proposals');
@@ -282,7 +288,7 @@ function ensureLearnings(file, ws) {
 }
 // Line index range [start, end) of a `## heading` section, or null.
 function sectionRange(lines, heading) {
-  const start = lines.findIndex(l => l.startsWith(`## ${heading}`));
+  const start = lines.findIndex(l => new RegExp(headRe(heading)).test(l + '\n'));
   if (start < 0) return null;
   let end = start + 1; while (end < lines.length && !lines[end].startsWith('## ')) end++;
   return [start, end];
@@ -436,5 +442,28 @@ if (require.main === module && process.argv.includes('--selftest')) {
   assert(rounds.filter(d => !/state updated|journal/.test(d)).length === 0, 'idempotent on re-apply: ' + JSON.stringify(rounds));
   assert(fs.readFileSync(path.join(root, 'DECISIONS.md'), 'utf8') === before, 'DECISIONS.md byte-identical after replay');
   fs.rmSync(root, { recursive: true, force: true });
+  // Heading anchor: "## Proposals archive" is not "## Proposals" (no write into the archive, not counted as pending).
+  const r2 = fs.mkdtempSync(path.join(os.tmpdir(), 'scribe-selftest-')), D2 = path.join(r2, 'DECISIONS.md');
+  const dash = (t, h) => (sectionBody(t, h) || '').split('\n').filter(l => l.startsWith('- ')).length;
+  fs.writeFileSync(D2, '# D\n\n## Ledger\n- 2026-01-01 — l\n\n## Proposals archive\n- [fact] **Old**: o (2026-01-01) [toolu_o] (declined 2026-01-02)\n');
+  assert.strictEqual(countPending(r2).proposals, 0, 'archive lines are not pending');
+  assert.strictEqual(applyProposal(r2, 'fix', { text: 'new fix', evidence: 'toolu_n', date: old(1) }), '+1 proposal (fix)');
+  const d2 = fs.readFileSync(D2, 'utf8');
+  assert.strictEqual(dash(d2, 'Proposals'), 1, 'new ## Proposals created: ' + d2);
+  assert.strictEqual(dash(d2, 'Proposals archive'), 1, 'archive untouched: ' + d2);
+  assert.strictEqual(countPending(r2).proposals, 1, 'only the live proposal is pending');
+  // CRLF files: same value is not a dispute, a write keeps CRLF, a journal block of the same session is replaced.
+  fs.writeFileSync(D2, '# D\r\n\r\n## Facts (current)\r\n- **K**: v1 (since 2026-01-01)\r\n\r\n## Proposals\r\n\r\n## Ledger\r\n- 2026-01-01 — l\r\n');
+  assert.strictEqual(applyFactKV(r2, { date: old(1), key: 'K', value: 'v1', evidence: 'toolu_k' }), null, 'CRLF: same value, nothing to do');
+  assert(!fs.readFileSync(D2, 'utf8').includes('disputed'), 'CRLF: no disputed marker');
+  assert.strictEqual(applyFactKV(r2, { date: old(1), key: 'K', value: 'v2', evidence: 'toolu_k' }), 'fact disputed: K');
+  const d3 = fs.readFileSync(D2, 'utf8');
+  assert(d3.includes(`- **K**: v1 (since 2026-01-01) ⚠ disputed → v2 (${old(1)})\r\n`) && !/[^\r]\n/.test(d3), 'CRLF kept on write: ' + JSON.stringify(d3));
+  fs.writeFileSync(path.join(r2, 'JOURNAL.md'), '# Journal\r\n\r\n### 2026-01-01 — session aaaa\r\n- old\r\n');
+  apply(r2, { summary: { did: ['new'] } }, ['aaaa']);
+  const j2 = fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8');
+  assert.strictEqual((j2.match(/^### /gm) || []).length, 1, 'CRLF journal: block replaced: ' + JSON.stringify(j2));
+  assert(j2.includes('- new\r\n') && !j2.includes('- old'), 'CRLF journal: new summary: ' + JSON.stringify(j2));
+  fs.rmSync(r2, { recursive: true, force: true });
   console.log('selftest OK:', done.join(' · '));
 }

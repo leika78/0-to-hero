@@ -38,7 +38,9 @@ last=""
 if [[ -f "${journal}" ]]; then
     last="$(grep -m1 -oE '^### [0-9]{4}-[0-9]{2}-[0-9]{2}' "${journal}" | cut -c5- || true)"
 fi
-slug="$(printf '%s' "${cwd}" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//; s/-*$//' | tr 'A-Z' 'a-z')"
+# Slug the native path like scribe-trigger.js: Git Bash pwd is /d/CLAUDE/… but Node sees d:\CLAUDE\… (d--CLAUDE-…).
+native="$(cygpath -w "${cwd}" 2>/dev/null || printf '%s' "${cwd}")"
+slug="$(printf '%s' "${native}" | sed 's/[^A-Za-z0-9]/-/g; s/^-*//; s/-*$//' | tr 'A-Z' 'a-z')"
 state_dir="$(find "${HOME}/.claude/scribe" -maxdepth 1 -mindepth 1 -type d -iname "${slug}" 2>/dev/null | head -1 || true)"
 unread=0
 if [[ -n "${state_dir}" && -f "${state_dir}/queue.jsonl" ]]; then

@@ -50,5 +50,23 @@ touch(c, 16 * 60_000);
 touch(a, 16 * 60_000);
 assert.strictEqual(run(), '', 'stale handover ignored');
 
+// A compaction append bumps the mtime of an old handover: its header time still rules.
+const iso = (ageMs) => new Date(Date.now() - ageMs).toISOString();
+const d = path.join(dir, 'd.md');
+fs.writeFileSync(d, block(5).replace('t5', iso(20 * 60_000)) + compaction);
+assert.strictEqual(run(), '', 'old block behind a fresh compaction ignored');
+
+// Two fresh handovers (parallel sessions): both listed, none injected, none consumed.
+const e = path.join(dir, 'e.md'), f = path.join(dir, 'f.md');
+fs.writeFileSync(e, block(6).replace('t6', iso(60_000)));
+fs.writeFileSync(f, block(7).replace('t7', iso(120_000)));
+ctx = run();
+assert.ok(ctx.startsWith('# Handovers waiting') && ctx.includes(e) && ctx.includes(f), 'both listed');
+assert.ok(!ctx.includes('body 6') && !ctx.includes('body 7'), 'none injected');
+assert.ok(!fs.existsSync(`${e}.consumed`) && !fs.existsSync(`${f}.consumed`), 'none consumed');
+fs.rmSync(f);
+ctx = run();
+assert.ok(ctx.includes('body 6') && fs.existsSync(`${e}.consumed`), 'single fresh one injected');
+
 fs.rmSync(home, { recursive: true, force: true });
 console.log('handover-read: all checks pass');

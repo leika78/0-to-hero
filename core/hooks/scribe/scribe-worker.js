@@ -236,6 +236,7 @@ ${delta}`;
 
 // Native binary beside the npm shim: no shell, so empty and multi-line arguments survive.
 function claudeBin() {
+  if (process.env.SCRIBE_CLAUDE_BIN) return process.env.SCRIBE_CLAUDE_BIN; // test seam
   if (process.platform !== 'win32') return 'claude';
   const exe = path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
   return fs.existsSync(exe) ? exe : 'claude.exe';
@@ -247,8 +248,10 @@ function runModel(root, prompt) {
   const args = ['-p', '--model', MODEL, '--tools', '', '--system-prompt', SYSTEM, '--output-format', 'json',
     '--no-session-persistence', '--setting-sources', 'local', '--strict-mcp-config', '--max-turns', '1'];
   const r = spawnSync(claudeBin(), args, { cwd: root, input: prompt, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 240_000 });
-  if (r.error) throw r.error;
-  let d; try { d = JSON.parse(r.stdout); } catch { throw new Error(`non-JSON claude output: ${(r.stderr || r.stdout || '').slice(0, 300)}`); }
+  // Failed call (spawn error, timeout, non-JSON): no usage reported, so charge the prompt size (≈ chars/4).
+  const failed = error => ({ tokens: Math.ceil(prompt.length / 4), cost: 0, ms: 0, turns: 0, usage: null, proposal: null, error });
+  if (r.error) return failed(`claude call failed: ${r.error.message}`);
+  let d; try { d = JSON.parse(r.stdout); } catch { return failed(`non-JSON claude output: ${(r.stderr || r.stdout || '').slice(0, 300)}`); }
   const u = d.usage || {};
   const tokens = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
   const meta = { tokens, cost: d.total_cost_usd || 0, ms: d.duration_ms || 0, turns: d.num_turns || 0, usage: { in: u.input_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0, out: u.output_tokens || 0 } };
@@ -342,6 +345,17 @@ function main() {
   const setCursor = (id, line) => { if (!DRY) fs.writeFileSync(path.join(STATE, 'cursors', `${id}.json`), JSON.stringify({ line, ts: Date.now() })); };
   const failFile = id => path.join(STATE, `fail-${id}`);
   const failures = id => { try { return Number(fs.readFileSync(failFile(id), 'utf8')) || 0; } catch { return 0; } };
+  // Do not acknowledge the delta: retry next run, give up after MAX_APPLY_FAILURES (cursor advanced, alert).
+  const retryOrGiveUp = (what, errors) => {
+    const giveUp = []; const retry = [];
+    for (const { e, d } of batch) {
+      const n = failures(e.session_id) + 1;
+      if (n >= MAX_APPLY_FAILURES) { setCursor(e.session_id, d.line); try { fs.unlinkSync(failFile(e.session_id)); } catch {} giveUp.push(e.session_id.slice(0, 8)); }
+      else { fs.writeFileSync(failFile(e.session_id), String(n)); retry.push({ ...e, flush: true }); }
+    }
+    requeue(retry);
+    alert(`scribe: ${what} — ${errors.join(' · ').slice(0, 300)}${giveUp.length ? ` — gave up on ${giveUp.join(', ')} after ${MAX_APPLY_FAILURES} tries` : ' — delta kept for retry'} (see worker.log)`);
+  };
   let batch = [];
   let q = [];
   try {
@@ -397,7 +411,14 @@ function main() {
     const ids = batch.map(b => b.e.session_id);
     const res = runModel(root, PROMPT(root, wss, memorySnapshot(root, wss, delta, ids), delta));
     if (!DRY) fs.appendFileSync(path.join(STATE, 'usage.jsonl'), JSON.stringify({ date: today(), ts: Date.now(), sessions: ids, tokens: res.tokens, cost: res.cost, ms: res.ms, turns: res.turns, usage: res.usage, delta_chars: delta.length, ok: !res.error }) + '\n');
-    if (res.error) throw new Error(res.error);
+    if (res.error) {
+      // A failed call counts like a failed apply, so a delta that always fails cannot loop forever.
+      if (DRY) throw new Error(res.error);
+      log(`model error: ${res.error}`);
+      retryOrGiveUp('model call failed', [res.error]);
+      try { fs.unlinkSync(taken); } catch {}
+      return;
+    }
     const { proposal: ok, rejected } = verify(res.proposal, delta, wss);
     log(`${ids.map(i => i.slice(0, 8)).join('+')}: delta ${delta.length} chars → ${res.tokens} tokens, $${res.cost.toFixed(3)} list, ${Math.round((Date.now() - t0) / 1000)}s, ${res.turns} turn(s), ${rejected} item(s) rejected (evidence/workspace)`);
     if (DRY) { console.log(JSON.stringify(ok, null, 2)); console.log(`[dry-run] tokens=${res.tokens} cost=$${res.cost.toFixed(3)} ms=${res.ms} rejected=${rejected}`); return; }
@@ -411,17 +432,8 @@ function main() {
     pending.total = pending.proposals + pending.candidates; pending.ageDays = ageDays; pending.alert = pending.total > 0;
     try { fs.writeFileSync(path.join(STATE, 'pending.json'), JSON.stringify({ ...pending, ts: Date.now() })); } catch {}
     journal({ sessions: batch.map(({ e, d }) => ({ id: e.session_id, from: d.from, to: d.line, partial: d.partial })), tokens: res.tokens, rejected, applied: done, proposal: ok });
-    if (errors.length) {
-      // Writer failed on part of the proposal: do not acknowledge the delta. Retry next run, give up after MAX_APPLY_FAILURES.
-      const giveUp = []; const retry = [];
-      for (const { e, d } of batch) {
-        const n = failures(e.session_id) + 1;
-        if (n >= MAX_APPLY_FAILURES) { setCursor(e.session_id, d.line); try { fs.unlinkSync(failFile(e.session_id)); } catch {} giveUp.push(e.session_id.slice(0, 8)); }
-        else { fs.writeFileSync(failFile(e.session_id), String(n)); retry.push({ ...e, flush: true }); }
-      }
-      requeue(retry);
-      alert(`scribe: apply errors — ${errors.join(' · ').slice(0, 300)}${giveUp.length ? ` — gave up on ${giveUp.join(', ')} after ${MAX_APPLY_FAILURES} tries` : ' — delta kept for retry'} (see worker.log)`);
-    } else {
+    if (errors.length) retryOrGiveUp('apply errors', errors); // writer failed on part of the proposal
+    else {
       for (const { e, d } of batch) { setCursor(e.session_id, d.line); try { fs.unlinkSync(failFile(e.session_id)); } catch {} }
       // A cut delta has more behind it: process the remainder right away.
       requeue(batch.filter(b => b.d.partial).map(b => ({ ...b.e, flush: true })));

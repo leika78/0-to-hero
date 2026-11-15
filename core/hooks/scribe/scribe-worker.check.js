@@ -100,5 +100,28 @@ assert.ok(acquireLock(lock), 'first lock acquired');
 assert.ok(!acquireLock(lock), 'second acquisition refused while fresh');
 const old = new Date(Date.now() - 11 * 60 * 1000); fs.utimesSync(lock, old, old);
 assert.ok(acquireLock(lock), 'stale lock (>10 min) is taken over');
+
+// A failed model call (spawn error: the binary does not exist) is charged to the budget and counted
+// like a failed apply: after MAX_APPLY_FAILURES (3) runs the delta is given up, no longer re-queued.
+const { spawnSync } = require('child_process');
+const home = path.join(tmp, 'home'); const proj = path.join(tmp, 'proj'); fs.mkdirSync(proj);
+const st = path.join(home, '.claude', 'scribe', 'fail'); fs.mkdirSync(st, { recursive: true });
+const tr2 = path.join(tmp, 't2.jsonl'); fs.writeFileSync(tr2, u('USER: ' + 'z'.repeat(80)) + '\n');
+fs.writeFileSync(path.join(st, 'queue.jsonl'), JSON.stringify({ session_id: 's1', transcript_path: tr2, cwd: proj, flush: true, ts: Date.now() }) + '\n');
+const env = { ...process.env, USERPROFILE: home, HOME: home, SCRIBE_CLAUDE_BIN: path.join(tmp, 'no-such-claude') };
+delete env.SCRIBE_DISCORD_WEBHOOK; delete env.SCRIBE_DISCORD_ENV;
+const run = () => spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'fail'], { env, encoding: 'utf8' });
+const lines = f => { try { return fs.readFileSync(path.join(st, f), 'utf8').split('\n').filter(Boolean); } catch { return []; } };
+run();
+assert.strictEqual(lines('usage.jsonl').length, 1, 'one failed call = exactly one usage line');
+const row = JSON.parse(lines('usage.jsonl')[0]);
+assert.ok(row.tokens > 0 && row.ok === false, 'failed call charged an estimated cost: ' + JSON.stringify(row));
+assert.strictEqual(lines('fail-s1')[0], '1', 'failure counted');
+assert.strictEqual(lines('queue.jsonl').length, 1, 'delta re-queued after the first failure');
+run(); run();
+assert.strictEqual(lines('usage.jsonl').length, 3, 'every failed call charged');
+assert.strictEqual(lines('queue.jsonl').length, 0, 'given up after 3 failures: not re-queued');
+assert.ok(!fs.existsSync(path.join(st, 'fail-s1')), 'failure counter cleared on give-up');
+assert.strictEqual(JSON.parse(lines('cursors/s1.json')[0]).line, 1, 'cursor advanced past the failing delta');
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-worker.check: ok');
