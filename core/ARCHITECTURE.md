@@ -27,7 +27,7 @@ Brain of the workspace. Transforms Claude into a specialist.
 ## Facts of record + archives
 
 - **DECISIONS.md** (project root) — three zones since durcir-v2. `## Facts (current)`: the project as it stands (domain, app name, prod host, accounts, pricing, commitments), **one line per key** `- **Key**: value (since date)`, replaced in place by `/memorise` when the value changes (the scribe only marks a line `⚠ disputed → new`), so the section is bounded by the number of keys and **injected whole at every SessionStart**. `## Ledger (facts of record)`: the dated log of decisions and irreversible events, newest first, append-only; only the 5 newest are injected, the rest is the searchable trace. `## ADR archive`: structural rationale (tool choices, workspace split, naming) — NOT injected, consulted on demand. Why the split: states and events age differently — a recency window is right for events and wrong for states (a host chosen in June must still be in context in December, whatever happened since). Every injected surface must be bounded by construction, not by a window; before v2 the Ledger was the only unbounded one. The injected sections exist because an empty, on-demand-only file is invisible and stays unused — that's how important facts get lost.
-- **Memory scribe** — background sorter that writes the history (`JOURNAL.md`, `## Current state`) from the transcript while the session runs, marks a changed Facts value as disputed, and queues every judgement in `## Proposals` / `## Candidates` for the owner (see Transversal: Memory scribe). **claude-mem** stays as the read-only archive of sessions before 2026-11-09 (`mem-search`).
+- **Memory scribe** — background sorter that writes the history (`JOURNAL.md`, `## Current state`) from the transcript while the session runs, marks a changed Facts value as disputed, and queues every judgement in `## Proposals` / `## Candidates` for the owner (see Transversal: Memory scribe). **claude-mem** is retired (2026-11-16): its sessions before 2026-11-09 are plain Markdown in `~/.claude/mem-archive/`, searched with Grep.
 
 ## Optional: Workspace map — a parent `CLAUDE.md` above several projects
 
@@ -166,7 +166,7 @@ The scribe is a sorter, not a writer of record: it writes history directly (jour
 
 **Light projects** (no folder with an `AGENT.md`): the root is the only workspace, written as `.` — the scribe puts rule candidates in the root `LEARNINGS.md`, never state (there is no `CONTEXT.md`); the resume point is the root `JOURNAL.md`, written and injected like everywhere else. Once a first workspace exists, `.` is refused and the root file's candidates are moved by the owner (`/memorise`).
 
-**claude-mem** stays installed as the read-only archive of what happened before (`mem-search "…"` over 42k observations) and for `save_memory` notes; its observation and summary capture is disabled (`CLAUDE_MEM_DISABLE_OBSERVATION` / `CLAUDE_MEM_DISABLE_SUMMARY`), which removed one Sonnet call per tool use, and its SessionStart injection is off for the Durcir projects (`CLAUDE_MEM_EXCLUDED_PROJECTS`; this also blocks its work-state and `save_memory` writes there). Rollback criterion and figures: ADR 2026-11-09.
+**claude-mem is retired** (2026-11-16). Its capture was frozen on 2026-11-09 (one Sonnet call per tool use, ADR 2026-11-09); its database was then exported once to plain Markdown (`core/tools/claude-mem-export.py` → `~/.claude/mem-archive/<project>/<YYYY-MM>.md`, one entry per observation and per session summary) and the plugin disabled. Older history is searched with Grep like the journal; the four claude-mem mechanisms worth keeping (file memory, files from tool calls, startup index, self-contained lines) live in the scribe (ADR 2026-11-16).
 
 ## Transversal: Learning layer (Durcir)
 
@@ -206,7 +206,6 @@ Installed at bootstrap, not per workspace. Transparent to the user.
 | ccusage | All | Session token monitoring from local JSONL files |
 | Memory scribe | All | Background memory sorter, one lean model call per project per 5 min at most (`core/hooks/scribe/`) |
 | Claude Hub | All (VS Code) | Sidebar: usage, recent projects, scribe badge, passive memory inbox `✉ N`, "run the scribe now" (`tools/claude-hub/`) |
-| claude-mem | All | Read-only archive of sessions before 2026-11-09 (`mem-search`); capture and SessionStart injection disabled (a frozen feed was two competing histories) |
 | jCodeMunch | Technical | Symbol-level code retrieval via AST — replaces full-file reads of code |
 | context7 | Technical | Current library/framework docs — replaces web search |
 
@@ -214,7 +213,7 @@ Navigation routed by target in project CLAUDE.md (technical profiles) — condit
 - Code symbol → `jcodemunch search_symbols` → `get_symbol` (full-file Read only if the outline is not enough)
 - Markdown / docs / config → direct Read, no restriction
 - Text search → Grep tool (shell fallback: `rtk grep`)
-- Past context → injected `DECISIONS.md` Facts + Ledger → `mem-search` for history older than the scribe
+- Past context → injected `DECISIONS.md` Facts + Ledger and journal index → Grep `JOURNAL.md` (then `~/.claude/mem-archive/` if the machine has the claude-mem export)
 
 ## Transversal: .skills/
 Available skills — never loaded globally, always via AGENT.md.
@@ -229,7 +228,7 @@ Project roadmap, generated by plan mode.
 ## Standard reading flow
 
 ```
-CLAUDE.md (routing + gotchas) → LEARNINGS.md (Active) + CONTEXT.md (brief + state) → AGENT.md (Rules) → [skills on-demand] → [DECISIONS.md ## ADR archive if the why is missing] → [mem-search for pre-scribe history]
+CLAUDE.md (routing + gotchas) → LEARNINGS.md (Active) + CONTEXT.md (brief + state) → AGENT.md (Rules) → [skills on-demand] → [DECISIONS.md ## ADR archive if the why is missing] → [Grep JOURNAL.md for older history]
 ```
 
 With the Learning layer opt-in, workspace Learnings **and `DECISIONS.md` Facts + Ledger** are auto-injected at session start via the `SessionStart` hook — so they're in the agent's context before the first prompt, ahead of the normal reading flow. The Pre-work checklist in `AGENT.md` ensures the same rules are re-read by subagents the hook cannot reach.

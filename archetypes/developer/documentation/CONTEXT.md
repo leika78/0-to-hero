@@ -30,4 +30,4 @@ Updated: 2026-04-01
 
 ## Thread
 <!-- Legacy: no longer appended. The session history lives in the root JOURNAL.md (written by the scribe). -->
-<!-- Older entries live in claude-mem (retrievable via mem-search). -->
+<!-- Older entries: JOURNAL.md (one block per session, written by the scribe). -->

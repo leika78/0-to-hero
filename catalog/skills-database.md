@@ -306,7 +306,6 @@ Installed at bootstrap, not per workspace. Transparent to the user.
 |------|--------|---------|-------------|
 | `RTK` | rtk-ai/rtk | 60-90% | CLI proxy, 34 filtering modules (git, cargo, npm, docker, tsc, etc.) |
 | `ccusage` | — | monitoring | Token metrics per session from local JSONL files |
-| `claude-mem` | thedotmack/claude-mem | — | Zero-touch persistent memory via hooks (SQLite + Chroma) |
 
 ### Technical profile only
 
@@ -333,12 +332,13 @@ Installed at bootstrap, not per workspace. Transparent to the user.
 
 ## Memory
 
-`claude-mem` is the default — installed at bootstrap for all profiles. Zero-touch: hooks capture automatically, no manual writing required.
+The memory is the kit's own: the scribe (`core/hooks/scribe/`) writes `JOURNAL.md` and queues facts and rules, two SessionStart hooks inject them, and the file-memory hook adds a file's history when it is touched. No third-party memory is installed.
 
 | Tool | Approach | When to use |
 |------|----------|-------------|
-| `claude-mem` (thedotmack) | SQLite + auto hooks + web interface | **Default — all projects** |
-| MCP `memory` | Knowledge graph | If structured, queryable memory is needed alongside claude-mem |
+| Memory scribe + file memory | Markdown files + hooks, one lean model call per project per 5 min at most | **Default — all projects** |
+| `claude-mem` (thedotmack) | SQLite + Chroma, one model call per tool use | Retired 2026-11-16 (cost); an existing install is exported with `core/tools/claude-mem-export.py`, then disabled |
+| MCP `memory` | Knowledge graph | If structured, queryable memory is needed alongside the journal |
 
 ---
 
@@ -352,4 +352,4 @@ Installed at bootstrap, not per workspace. Transparent to the user.
 | travisvn/awesome-claude-skills | Curated skills across all categories | 10k ⭐ |
 | obra/superpowers | 20+ battle-tested process skills | — |
 | modelcontextprotocol/servers | Official MCP servers | — |
-| thedotmack/claude-mem | Persistent SQLite memory | — |
+| thedotmack/claude-mem | Persistent SQLite memory (retired here 2026-11-16; four of its mechanisms live in the scribe) | — |

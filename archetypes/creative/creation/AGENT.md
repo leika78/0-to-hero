@@ -5,7 +5,7 @@ Last updated: 2026-04-24
 ## Pre-work checklist (MANDATORY before any task)
 1. Read this workspace's `LEARNINGS.md` `## Active Learnings` + this AGENT.md `## Rules` + `CONTEXT.md` `## Current state`
 2. Apply every ALWAYS/NEVER rule (Active Learnings + this file's Rules + root CLAUDE.md Gotchas) as a binding constraint
-3. Non-trivial task → ONE `mem-search` on the task topic before starting (past decisions and solved incidents live there; grep only sees the present code)
+3. Non-trivial task → ONE Grep of `JOURNAL.md` + `DECISIONS.md` on the task topic before starting (past decisions and solved incidents live there; grep of the code only sees the present)
 4. At end of work, propose new Learnings via `/memorise` if a reusable pattern emerged
 5. If no `LEARNINGS.md` / `CONTEXT.md` exists yet, proceed normally and flag it to the user
 

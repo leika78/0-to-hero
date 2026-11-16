@@ -46,7 +46,7 @@ Open-source tool to structure your Claude workflow into efficient workspaces wit
 - **Markdown / docs / config** → Read directly, no restriction.
 - **"Which API should I use?"** → Context7 MCP (use `/org/project` format if the lib is known)
 - **"Find this text"** → Grep tool (shell fallback: `rtk grep`)
-- **"What did we do before?"** → `DECISIONS.md ## Ledger` (injected) → then `mem-search "…"` for older history
+- **"What did we do before?"** → `DECISIONS.md ## Ledger` (injected) → then Grep `JOURNAL.md`, then `~/.claude/mem-archive/` for sessions before 2026-11-09
 
 ## Before acting
 - State assumptions explicitly. If uncertain, ask — don't guess.
@@ -60,8 +60,8 @@ Surgical. Summarize first, confirm if > 3 files. Diff if > 20 lines. Do not fix 
 
 ## Startup
 
-The SessionStart hooks inject `DECISIONS.md ## Facts` + `## Ledger`, each workspace's `## Active Learnings`, and the recent history (`JOURNAL.md` blocks + `## Current state`), kept current by the background memory scribe. Use them to resume without redoing work. claude-mem is the read-only archive of sessions before 2026-11-09.
-If more detail is needed → `mem-search "…"` → then `get_observations` on the relevant IDs only. Never load everything at once.
+The SessionStart hooks inject `DECISIONS.md ## Facts` + `## Ledger`, each workspace's `## Active Learnings`, and the recent history (`JOURNAL.md` blocks + `## Current state`), kept current by the background memory scribe. Use them to resume without redoing work. Before opening a file, a hook adds what past sessions did to it.
+If more detail is needed → Grep `JOURNAL.md` / `DECISIONS.md`, then `~/.claude/mem-archive/` (claude-mem export, sessions before 2026-11-09); Read only the matching block. Never load everything at once.
 
 ## Memory
 
@@ -72,7 +72,7 @@ If more detail is needed → `mem-search "…"` → then `get_observations` on t
 | `/gotcha` | Gotchas section below | One-line cross-workspace rule: `NEVER/ALWAYS [action] ([why])` |
 | `remember forever` | Claude native memory | Permanent preferences, conventions, identity only |
 
-Never put session context in native memory. Never put preferences in claude-mem.
+Never put session context in native memory.
 
 **Closing**: `/clear` whenever you want — the scribe keeps writing from the transcript (queue on disk, nothing lost). The memory inbox drains itself: at 5 waiting items, or one older than 3 days, the session runs `/memorise` in a background agent at the end of a turn and asks only about what it could not settle. `/memorise` by hand does the same at any time.
 

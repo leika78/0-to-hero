@@ -59,14 +59,10 @@ process.stdin.on('end', () => {
       } catch (e) { /* silent */ }
     }
 
-    // Memory health: worker process + active learnings count + auto-mem flag
+    // Memory: active learnings count + auto-mem flag (claude-mem's worker light is gone with the plugin, 2026-11-16)
     let mem = '';
     try {
-      const supervisorPath = path.join(homeDir, '.claude-mem', 'supervisor.json');
-      if (fs.existsSync(supervisorPath)) {
-        const sup = JSON.parse(fs.readFileSync(supervisorPath, 'utf8'));
-        const workerAlive = sup?.processes?.worker?.pid != null;
-
+      {
         const globalSettings = path.join(claudeDir, 'settings.json');
         let autoMemKilled = false;
         if (fs.existsSync(globalSettings)) {
@@ -89,13 +85,9 @@ process.stdin.on('end', () => {
           }
         }
 
-        const brain = workerAlive ? '\x1b[32m🧠\x1b[0m' : '\x1b[31m🧠✗\x1b[0m';
         const learn = `\x1b[2m${learningsCount}L\x1b[0m`;
         const warn = autoMemKilled ? ' \x1b[31m!auto\x1b[0m' : '';
-        mem = ` │ ${brain} ${learn}${warn}`;
-      } else {
-        // No claude-mem at all — show neutral indicator
-        mem = ' │ \x1b[2m🧠—\x1b[0m';
+        mem = ` │ 🧠 ${learn}${warn}`;
       }
     } catch (e) { /* silent */ }
 

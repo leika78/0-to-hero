@@ -17,7 +17,7 @@
 - **Markdown / docs / config** → Read directly, no restriction.
 - **"Which API should I use?"** → Context7 MCP (use `/org/project` format if the lib is known)
 - **"Find this text"** → Grep tool (shell fallback: `rtk grep`)
-- **"What did we do before?"** → `DECISIONS.md ## Ledger` (injected) → then `mem-search "…"` for older history
+- **"What did we do before?"** → `DECISIONS.md ## Ledger` (injected) → then Grep `JOURNAL.md`, then `~/.claude/mem-archive/` for sessions before 2026-11-09 (only on a machine that ran claude-mem)
 
 ## Modifications
 
@@ -25,8 +25,8 @@ Surgical. Summarize first, confirm if > 3 files. Diff if > 20 lines. Do not fix 
 
 ## Startup
 
-The SessionStart hook injects `DECISIONS.md ## Facts (current)` whole, the 5 newest `## Ledger` lines and each workspace's `## Active Learnings`, kept current by the background memory scribe. Use them to resume without redoing work. claude-mem is the read-only archive of sessions before the scribe (2026-11).
-If more detail is needed → `mem-search "…"` → then `get_observations` on the relevant IDs only. Never load everything at once.
+The SessionStart hook injects `DECISIONS.md ## Facts (current)` whole, the 5 newest `## Ledger` lines and each workspace's `## Active Learnings`, kept current by the background memory scribe. Use them to resume without redoing work. Before opening a file, a hook adds what past sessions did to it.
+If more detail is needed → Grep `JOURNAL.md` / `DECISIONS.md` (and `~/.claude/mem-archive/`, the claude-mem export, when it exists); Read only the matching block. Never load everything at once.
 
 ## Memory
 
@@ -37,7 +37,7 @@ If more detail is needed → `mem-search "…"` → then `get_observations` on t
 | (scribe, automatic) | `JOURNAL.md` + `<workspace>/CONTEXT.md ## Current state` | Session history: did / next / dated events, one block per session, injected at SessionStart |
 | `remember forever` | Claude native memory | Permanent preferences, conventions, identity only |
 
-Never put session context in native memory. Never put preferences in claude-mem. Never leave a fact of record only in claude-mem (it gets missed) — it goes to the `DECISIONS.md` ledger.
+Never put session context in native memory. A fact of record goes to the `DECISIONS.md` ledger.
 
 **Closing**: `/clear` whenever you want — the scribe keeps writing from the transcript (queue on disk, nothing lost). The memory inbox drains itself: at 5 waiting items, or one older than 3 days, the session runs `/memorise` in a background agent at the end of a turn and asks only about what it could not settle. `/memorise` by hand does the same at any time.
 

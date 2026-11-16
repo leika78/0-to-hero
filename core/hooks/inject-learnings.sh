@@ -67,7 +67,7 @@ done < <(find "${cwd}" -maxdepth 2 \( -name "LEARNINGS.md" -o -name "CONTEXT.md"
 # Injection is capped to the LEDGER_CAP most recent entries (default 10): the file is the
 # full record and never trimmed, but reading 100+ dated milestones at every session start
 # cost ~17k tokens on a large project (2026-09-12) for facts a session almost never needs. Older
-# entries stay reachable by Grep / mem-search; a fact every session must know belongs in
+# entries stay reachable by Grep; a fact every session must know belongs in
 # CLAUDE.md ## Gotchas, which is injected whole. Override per shell: LEDGER_CAP=0 = no cap.
 # 30 → 10 on 2026-11-08: with ~500-char entries, 30 of them pushed the payload to 16.9k chars,
 # over Claude Code's 10,000-char additionalContext cap — the whole payload was then written to

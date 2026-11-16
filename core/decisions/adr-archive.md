@@ -425,3 +425,26 @@ those still match by name.
 
 **Rollback.** Remove the `PreToolUse` entry for `file-memory.js`; set `JOURNAL_INDEX=0`. The
 Files lines stay in the journals, inert.
+
+## 2026-11-16 — claude-mem retired: its database becomes Markdown, the plugin goes
+
+Once its capture was frozen (2026-11-09), claude-mem only served `mem-search` over the archive,
+which meant a worker and a Chroma server always running, ~30 skills and ~20 MCP tools listed in
+every session, and two hooks. The owner asked for a plain file instead.
+
+**Decision.** `core/tools/claude-mem-export.py` opens the database read-only and writes
+`~/.claude/mem-archive/<project>/<YYYY-MM>.md`, one entry per observation (heading
+`### <date> <time> #<id> <type>: <title>`, then subtitle, files modified, facts and narrative) and
+per session summary, in date order, plus a `README.md` with the counts. On the owner's machine:
+42,612 observations and 8,865 summaries from 31 project names (2026-04-12 → 2026-11-09), in 62
+files, 85 MB, exported in 8 s; a Grep over the whole folder takes 0.4 s. The plugin was then set
+to `false`, its three hook entries removed and its worker and Chroma stopped. `~/.claude-mem/`
+stays on disk as the backup. Every `mem-search` route in the kit and the projects became "Grep
+`JOURNAL.md` / `DECISIONS.md`, then `~/.claude/mem-archive/`". The bootstrap's "freeze claude-mem"
+step became "retire claude-mem" (export, then disable). The statusline lost its claude-mem worker
+light.
+
+**Lost.** The vector half of its search (Chroma). At this size, Grep with a few synonyms plus a
+session that reads the hits covers it (ADR 2026-11-10, reopen criterion unchanged).
+
+**Rollback.** Set the plugin back to `true` in `enabledPlugins`: the database is untouched.
