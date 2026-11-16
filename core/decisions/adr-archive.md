@@ -448,3 +448,21 @@ light.
 session that reads the hits covers it (ADR 2026-11-10, reopen criterion unchanged).
 
 **Rollback.** Set the plugin back to `true` in `enabledPlugins`: the database is untouched.
+
+## 2026-11-16 — Claude Hub 2.0: the memory in words, for people who do not read symbols
+
+The memory stack worked, but the only way to see it was a row of symbols (`✍ ↻ ✓ ✉1`, a second `✍`
+button) that also cut the project names short in a narrow sidebar. Someone new after `/bootstrap`
+could not tell what the scribe was, whether closing was safe, or what Claude actually knew.
+
+**Decision.** `tools/claude-hub` 2.0.0. Each project now takes two lines: the name in full, then
+the memory state in words (`✓ Memory up to date` / `↻ Behind · Update now` / `⏳ Updating…`),
+`✉ N to review`, and `What Claude knows ›`. That last link opens a page built from the project's
+own files: items to review, Facts, Active rules per workspace, and the 3 newest journal blocks
+with the files they edited, followed by an index of the 15 before. Evidence ids and tags are
+hidden, and every part links to its file. A four-line welcome card is shown once (the `?` button
+brings it back). French or English follows VS Code's language. The bootstrap now installs the
+`.vsix` when the `code` command exists. `extension.check.js` checks the parsing and the webview
+script with VS Code stubbed; `--preview` writes the panel as HTML to look at.
+
+**Not done.** The scribe's daily cost was left out of the panel at the owner's request.
