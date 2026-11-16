@@ -12,3 +12,4 @@
 # Built VS Code extension (attach to a GitHub Release instead)
 *.vsix
 JOURNAL.md
+!tools/claude-hub/claude-hub-*.vsix
