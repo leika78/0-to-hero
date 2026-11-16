@@ -16,7 +16,9 @@ Rationale and measured numbers: `core/decisions/adr-archive.md` (2026-11-08, 202
 | `scribe-writer.js` | Bounded, deterministic writes. Only the destinations above, atomic temp+rename, fuzzy dedup of candidates, a proposal the owner already settled is never queued again, `expire()` (30 / 60 days, plus lines already tagged with an outcome and leftover `[log]` proposals). `node scribe-writer.js --selftest`. |
 | `scribe-worker.check.js` | Offline check of verify / signal filter / cursor / lock. `node scribe-worker.check.js`. |
 | `root.check.js` | Offline check of project-root resolution (JS and the bash injector agree, a `cd` does not move it) and of the light-project `.` workspace. `node root.check.js`. |
-| `../inject-journal.sh` | Second `SessionStart` hook: coverage line, 3 newest journal blocks, Current state per workspace, under its own 9k cap. |
+| `../inject-journal.sh` | Second `SessionStart` hook: coverage line, 3 newest journal blocks, one index line (date + first summary line) per older block (15), Current state per workspace, under its own 9k cap. |
+| `file-memory.js` | `PreToolUse` hook (`Read\|Edit\|MultiEdit\|Write\|NotebookEdit`): before the session touches a file, injects the journal blocks whose `- Files:` line lists it or whose text names it, plus the Facts / Ledger / Active-rule lines naming it. Once per session (and subagent) per file, ≤ 2.5k chars, silent when nothing matches. Also `filesTouched()`, which the worker uses to fill the `- Files:` line from the tool calls (main transcript + subagents, failed calls excluded), and `--backfill [--apply] <root>…` for blocks written before. |
+| `file-memory.check.js` | Offline check of the files read from tool calls, the Files line, the hook, the startup index and the backfill. `node file-memory.check.js`. |
 
 ## Install (once per machine)
 
@@ -26,6 +28,7 @@ The injectors, the statusline and the scribe share one project-root rule, so ins
 mkdir -p ~/.claude/hooks/scribe
 cp core/hooks/scribe/*.js ~/.claude/hooks/scribe/
 cp core/hooks/inject-learnings.sh core/hooks/inject-journal.sh core/hooks/claude-statusline.js ~/.claude/hooks/
+# file-memory.js is in scribe/*.js: the worker, the writer and the PreToolUse hook all load it from there
 ```
 
 The repo's `.claude/settings.json` calls `~/.claude/hooks/inject-learnings.sh`: it does nothing until this step is done.
@@ -36,8 +39,12 @@ The repo's `.claude/settings.json` calls `~/.claude/hooks/inject-learnings.sh`: 
 "SessionStart": [{ "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/inject-journal.sh", "timeout": 10 }] }],
 "Stop":         [{ "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/scribe/scribe-trigger.js", "timeout": 10, "async": true },
                               { "type": "command", "command": "node ~/.claude/hooks/scribe/scribe-trigger.js --inbox", "timeout": 10 }] }],
-"SessionEnd":   [{ "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/scribe/scribe-trigger.js", "timeout": 10, "async": true }] }]
+"SessionEnd":   [{ "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/scribe/scribe-trigger.js", "timeout": 10, "async": true }] }],
+"PreToolUse":   [{ "matcher": "Read|Edit|MultiEdit|Write|NotebookEdit",
+                   "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/scribe/file-memory.js", "timeout": 5 }] }]
 ```
+
+The `PreToolUse` entry is the file memory: synchronous (its output must reach the turn), about 0.1 s per call, nothing printed when the file has no history. Once installed, give the existing journals their `- Files:` lines: `node ~/.claude/hooks/scribe/file-memory.js --backfill <root>…` (dry run, one report line per project), then the same with `--apply`. Only blocks whose transcript is still in `~/.claude/projects` can be filled (`cleanupPeriodDays`); older blocks are still found by name.
 
 The second `Stop` entry (`--inbox`, synchronous, optional) makes the review automatic: when a project's inbox reaches 5 items, or its oldest item has waited 3 days, the hook holds the turn once per session and the session drains the inbox itself — a background subagent follows `/memorise`, decides from reading, and the owner is asked only about what it could not settle and about fixes to apply. Attended sessions only (`CLAUDE_CODE_SESSION_ATTENDED=1`); without that entry `/memorise` stays a manual command.
 
@@ -54,6 +61,8 @@ On Windows use the full `node.exe` path (and a hidden-console launcher if the St
 | `MAX_APPLY_FAILURES` (constant) | 3 | a delta whose apply reports an error (missing destination, race) is re-sent up to 3 times, then dropped with an alert naming the loss |
 | `CANDIDATE_DAYS` / `PROPOSAL_DAYS` (constants) | 30 / 60 | expiry of an unreviewed candidate / proposal to its archive section |
 | `JOURNAL_BLOCKS`, `JOURNAL_BLOCK_CAP`, `JOURNAL_STATE_CAP`, `JOURNAL_MAX_CHARS` | 3, 1800, 500, 9000 | `inject-journal.sh` budgets (chars, whole lines only) |
+| `JOURNAL_INDEX`, `JOURNAL_INDEX_CAP` | 15, 160 | older blocks listed as one index line each (0 = none), chars of summary per line |
+| `FILE_MEMORY_CAP` | 2500 | chars injected by `file-memory.js` per file |
 | `SCRIBE_DISCORD_WEBHOOK` | unset | webhook URL for budget / failure alerts |
 | `SCRIBE_DISCORD_ENV` | unset | alternative: a `KEY=VALUE` file holding `DISCORD_WEBHOOK_AUDIT` or `DISCORD_WEBHOOK_SESSIONS` |
 

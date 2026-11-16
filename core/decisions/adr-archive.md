@@ -380,3 +380,48 @@ show the tightened definition holds.
 
 **Rollback.** Remove the `--inbox` entry from `Stop`: `/memorise` is a manual command again and
 nothing else changes.
+
+## 2026-11-16 — Four mechanisms borrowed from claude-mem, none of its machinery
+
+The owner asked whether the stack should take claude-mem's ideas without bringing claude-mem back.
+A read of its source (v14) listed about twenty mechanisms. Four were taken; each one costs no model
+call and needs no database.
+
+**Taken.**
+- *File memory at the moment a file is touched* (its `file-context` hook). A `PreToolUse` hook on
+  `Read|Edit|MultiEdit|Write|NotebookEdit`, `core/hooks/scribe/file-memory.js`, injects what past
+  sessions did to the file or said about it: journal blocks that list it or name it, plus the
+  Facts, Ledger and Active-rule lines that name it. It fires once per session (and per subagent)
+  per file, is capped at 2,500 chars and stays silent when nothing matches. It searches the
+  session's project and, when different, the project that holds the file. A bare basename
+  matches only when it is distinctive (never `index.js`, `README.md`); an extensionless stem
+  matches only when it is compound (`scribe-worker`, never `budget`). Measured at about 95 ms per
+  call, the node start included. This is the answer to "remember things from long ago": the old
+  decision comes back when its file is touched again, with nothing to search for.
+- *Touched files read from the tool calls, not from the model.* The worker takes the files the
+  batch's sessions really edited from the whole transcripts, subagents included, and leaves out
+  failed calls, memory files, scratch, handovers and `_private`. The writer puts them on a
+  `- Files:` line at the end of the session's journal block, the union of every run, capped at 60.
+  The model never sees that line, and the session start never injects it. `--backfill` filled
+  the line for the old blocks whose transcript is still on disk.
+- *An index instead of more full text at session start* (its startup index of observation
+  titles). `inject-journal.sh` adds, after the 3 full blocks, one line per older block (the
+  next 15): the date and the first summary line, cut on a word. This is about 1–2k chars for
+  roughly six times the horizon. Over the cap, the index lines go before any full block does.
+- *Self-contained lines* (its "facts: no pronouns, filenames and values"). The scribe prompt
+  asks for every line to read alone a year later and to name its file, tool, value or person,
+  because that is what a later search or the file-memory hook matches on.
+
+**Left, and why.** The per-tool observer model is the cost frozen on 2026-11-09. Chroma vectors,
+corpora and the 547 MB database: at about 1 MB of memory text, grep plus a session that reads the
+hits does the semantic part. Reinforcement counts: the ×N counter was removed on purpose in v3.
+Work-state: the journal's `Next:` and the handover already carry it. Cursor-enforced progressive
+disclosure: the shape (index first, detail on demand) is kept; the enforcement is not needed
+without an MCP server.
+
+**Known gaps.** A Bash edit (`sed -i`, a script writing a file) does not reach the Files line.
+Transcripts are kept 365 days (`cleanupPeriodDays`), so the backfill cannot reach older blocks;
+those still match by name.
+
+**Rollback.** Remove the `PreToolUse` entry for `file-memory.js`; set `JOURNAL_INDEX=0`. The
+Files lines stay in the journals, inert.

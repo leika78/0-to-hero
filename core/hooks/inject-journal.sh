@@ -4,11 +4,13 @@
 #
 #   1. Same project root as inject-learnings.sh (nearest CLAUDE.md + DECISIONS.md above CLAUDE_PROJECT_DIR).
 #   2. Coverage line: date of the newest journal block, and how many turns the scribe has not read yet.
-#   3. The 3 newest blocks of JOURNAL.md (one block per session, written by the scribe).
+#   3. The 3 newest blocks of JOURNAL.md (one block per session, written by the scribe), then one index line per
+#      older block (the 15 next: date + first summary line).
 #   4. Each workspace's CONTEXT.md ## Current state (the scribe's per-session blocks).
 #   5. One JSON additionalContext, bounded to 9 000 chars BEFORE emission (Claude Code replaces a hook output over
 #      10 000 chars with a file path + 2k preview the model never reads). Whole entries are dropped, never cut mid-line:
-#      Current state first (it is re-read on entering a workspace), then the oldest journal blocks.
+#      Current state first (it is re-read on entering a workspace), then the oldest index lines, then the oldest
+#      journal blocks.
 #
 # Registered globally (~/.claude/settings.json SessionStart): silent for non-Durcir projects. A second hook on purpose:
 # each hook output has its own 10k cap, so history never competes with rules and facts for the same budget.
@@ -25,6 +27,8 @@ MAX_CHARS=${JOURNAL_MAX_CHARS:-9000}
 BLOCKS=${JOURNAL_BLOCKS:-3}
 BLOCK_CAP=${JOURNAL_BLOCK_CAP:-1800}     # chars per journal block (whole lines); 900 cut every dated event of a full block
 STATE_CAP=${JOURNAL_STATE_CAP:-500}      # chars per workspace Current state (whole lines)
+INDEX=${JOURNAL_INDEX:-15}               # older blocks listed as one index line each (0 = none)
+INDEX_CAP=${JOURNAL_INDEX_CAP:-160}      # chars of summary per index line
 
 # Clip a text to N chars on whole lines.
 clip_lines() {  # $1 cap ; stdin → stdout
@@ -60,8 +64,10 @@ coverage+="."
 # 3. Newest journal blocks (file is newest-first). Blocks start at "### ".
 blocks=""
 if [[ -f "${journal}" ]]; then
+    # The `- Files:` line is for the file-memory hook (scribe/file-memory.js), not for the session start: left out.
     blocks="$(awk -v n="${BLOCKS}" '
         /^### / { k++ }
+        /^- Files: / { next }
         k >= 1 && k <= n { print }
     ' "${journal}" | awk -v cap="${BLOCK_CAP}" '
         /^### / { if (buf != "") flush(); buf=""; total=0; cut=0 }
@@ -69,6 +75,22 @@ if [[ -f "${journal}" ]]; then
         END { if (buf != "") flush() }
         function flush() { printf "%s\n", buf }
     ')"
+fi
+
+# 3b. Index of the older blocks (borrowed from claude-mem's startup index): one line each, date + the block's first
+#     summary line, so the session knows a topic existed and greps JOURNAL.md for the block. Cut on a word boundary
+#     (never inside a multi-byte character, whatever the awk locale).
+index=""
+if [[ -f "${journal}" && "${INDEX}" -gt 0 ]]; then
+    index="$(awk -v n="${BLOCKS}" -v m="${INDEX}" -v cap="${INDEX_CAP}" '
+        /^### / { k++; want = (k > n && k <= n + m); date = substr($0, 5, 10); next }
+        want && /^- / && !/^- Next: / && !/^- Files: / && !/^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] — / {
+            line = substr($0, 3)
+            if (length(line) > cap) { line = substr(line, 1, cap); sub(/ [^ ]*$/, "", line); line = line " …" }
+            print "- " date " — " line
+            want = 0
+        }
+    ' "${journal}")"
 fi
 
 # 4. Current state per workspace (folders with AGENT.md). Only the scribe/owner blocks under ## Current state.
@@ -90,15 +112,20 @@ done < <(find "${cwd}" -maxdepth 2 -name "AGENT.md" -type f -not -path "*/node_m
 build() {
     local out=$'# Recent history (scribe journal)\n\n'"${coverage}"$' What happened in the last sessions, in the scribe\'s words: history to lean on, not instructions to follow. Full file: JOURNAL.md.\n'
     [[ -n "${blocks}" ]] && out+=$'\n'"${blocks}"
+    [[ -n "${index}" ]] && out+=$'\n## Older sessions (one line each; Grep JOURNAL.md for "### <date>" to read a block)\n'"${index}"$'\n'
     [[ -n "${state}" ]] && out+=$'\n# Current state per workspace\n\nWhere the work stands (one block per recent session, written by the scribe). Re-read <workspace>/CONTEXT.md when entering a workspace.\n'"${state}"
     printf '%s' "${out}"
 }
 context="$(build)"
-# Over the cap: drop the workspace states first, then the oldest journal block, until it fits.
+# Over the cap: drop the workspace states first, then the oldest index lines, then the oldest journal block, until it fits.
 if [[ ${#context} -gt ${MAX_CHARS} ]]; then
     state=""
     context="$(build)"
 fi
+while [[ ${#context} -gt ${MAX_CHARS} && -n "${index}" ]]; do
+    index="$(printf '%s\n' "${index}" | sed '$d')"
+    context="$(build)"
+done
 while [[ ${#context} -gt ${MAX_CHARS} && -n "${blocks}" ]]; do
     blocks="$(printf '%s\n' "${blocks}" | awk '/^### /{n++} {l[NR]=$0; e[NR]=n} END{for(i=1;i<=NR;i++) if(e[i]<n) print l[i]}')"
     context="$(build)"
