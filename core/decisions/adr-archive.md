@@ -466,3 +466,31 @@ brings it back). French or English follows VS Code's language. The bootstrap now
 script with VS Code stubbed; `--preview` writes the panel as HTML to look at.
 
 **Not done.** The scribe's daily cost was left out of the panel at the owner's request.
+
+## 2026-11-18 — Notes: the fine grain comes back, written by the scribe with no review
+
+The owner felt the memory had lost its detail since claude-mem went. Measured on 280 sessions
+(transcripts 2026-10-10 → 2026-11-18): tool errors per 100 calls did not move (2.7 → 2.3) and
+neither did the owner's "already told you" messages (0.9 % → 1.0 %). What moved is the resolution.
+claude-mem kept 31 titled observations per session, 53 % of them discoveries, and showed the 50
+newest titles at every start. The scribe kept 6.8 journal lines per session and showed 3 summaries.
+Its "log" category accepted only a decision or an irreversible event, "when in doubt, not log", so
+a finding (a constraint met, a cause found, a lead dropped) had nowhere to go: not a fact, not a
+rule, and a rule candidate judged one-off was archived.
+
+**Decision.** The "log" items become notes. Up to 8 per run, one line each (≤ 160 chars), typed
+`discovery` / `gotcha` / `bugfix` / `decision` / `change`, same evidence rule as before, written
+under the session's journal block as `- YYYY-MM-DD — type: text [evidence]`. No review and no
+queue: the cap per run is the bound. `inject-journal.sh` lists the project's 30 newest notes at
+session start, whatever their session, and no longer repeats them inside the full blocks. Over the
+9k cap the index lines go first, then Current state, then the oldest notes. The file-memory hook
+and Grep needed no change: they already read the dated lines of the journal.
+
+**Cost.** The same model call; a few hundred output tokens per run. A dry run on a live session
+gave 3 notes for 25.6k tokens, the usual size of a run.
+
+**Not done.** No backfill of 2026-10-25 → 2026-11-18. Rules and `/memorise` are unchanged: a trap
+declined as a rule now survives as a note. To re-measure after a week: notes per session, and how
+often the owner has to ask whether something was already done.
+
+**Rollback.** `JOURNAL_NOTES=0` hides them at start; the lines stay in the journals, inert.

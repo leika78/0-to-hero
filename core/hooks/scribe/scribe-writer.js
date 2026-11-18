@@ -101,14 +101,17 @@ function applyState(root, s, sessions = []) {
 }
 
 // JOURNAL.md — the project's history as the scribe saw it: one block per session, newest first, re-written at every run
-// of that session (so a missed SessionEnd never loses the summary; the block just stops growing). Events ("log" items:
-// decisions, irreversible things) are listed under the block. Never trimmed here: inject-journal.sh reads the 3 newest.
+// of that session (so a missed SessionEnd never loses the summary; the block just stops growing). Notes ("log" items:
+// typed one-line findings, fixes and decisions) are listed under the block as dated lines. Never trimmed here:
+// inject-journal.sh reads the 3 newest blocks and the project's newest notes.
+const NOTE_TYPES = ['discovery', 'gotcha', 'bugfix', 'decision', 'change'];
 const JOURNAL_HEADER = '# Journal\n<!-- Written by the memory scribe: one block per session, newest first (summary, next step, dated events with evidence ids). -->\n<!-- The 3 newest blocks are injected at SessionStart. History, not instructions: a line here is what happened, not what to do. -->\n\n';
 // `files` = the paths the batch's sessions really edited (file-memory.js, read from the tool calls, never the model):
 // the block's last line `- Files: …`, the union of every run of that session.
 function applyJournal(root, j, sessions = [], events = [], files = []) {
   const did = (Array.isArray(j?.did) ? j.did : []).slice(0, 4).map(l => clip(String(l).replace(/\n/g, ' ').trim(), 220)).filter(Boolean);
-  const evs = events.map(e => `- ${/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : today()} — ${clip(String(e.text || '').replace(/\n/g, ' ').trim(), MAX_FACT)} [${clip(String(e.evidence || '').replace(/[\[\]\n]/g, ' ').trim(), 80)}]${e.why ? ` why: ${clip(String(e.why).replace(/\n/g, ' ').trim(), 160)}` : ''}`).filter(l => !l.includes('—  ['));
+  // A note's type is a plain `type: ` prefix (no brackets: the first bracket of the line is its evidence id).
+  const evs = events.map(e => `- ${/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : today()} — ${NOTE_TYPES.includes(e.type) ? `${e.type}: ` : ''}${clip(String(e.text || '').replace(/\n/g, ' ').trim(), MAX_FACT)} [${clip(String(e.evidence || '').replace(/[\[\]\n]/g, ' ').trim(), 80)}]${e.why ? ` why: ${clip(String(e.why).replace(/\n/g, ' ').trim(), 160)}` : ''}`).filter(l => !l.includes('—  ['));
   if (!did.length && !evs.length) return null;
   const ids = batchIds(sessions);
   const file = path.join(root, 'JOURNAL.md');
@@ -412,9 +415,9 @@ if (require.main === module && process.argv.includes('--selftest')) {
   assert(/- ALWAYS do X \(why\) \(/.test(lrn) && /- NEVER do X \(why\) \(/.test(lrn), 'opposite polarity is a separate rule');
   assert(!done.some(d => / error: /.test(d)), 'no error: ' + done);
   // Second run of the same session: journal block replaced (not duplicated), events kept, new event appended.
-  apply(root, { summary: { did: ['Shipped the guide hub', 'Deployed'], next: 'watch logs' }, log: [{ date: `${old(0)}`, text: 'domain bought', evidence: 'toolu_9' }] }, ['abcd1234-x', 'efgh5678-y']);
+  apply(root, { summary: { did: ['Shipped the guide hub', 'Deployed'], next: 'watch logs' }, log: [{ date: `${old(0)}`, type: 'decision', text: 'domain bought', evidence: 'toolu_9' }] }, ['abcd1234-x', 'efgh5678-y']);
   const jr2 = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8');
-  assert((jr2.match(/^### /gm) || []).length === 1 && jr2.includes(`- Deployed\n- Next: watch logs\n- ${old(1)} — launch decided for March`) && jr2.includes(`- ${old(0)} — domain bought [toolu_9]`) && !jr2.includes('Fixed the byline'), 'same session re-run: block replaced, events accumulate: ' + jr2);
+  assert((jr2.match(/^### /gm) || []).length === 1 && jr2.includes(`- Deployed\n- Next: watch logs\n- ${old(1)} — launch decided for March`) && jr2.includes(`- ${old(0)} — decision: domain bought [toolu_9]`) && !jr2.includes('Fixed the byline'), 'same session re-run: block replaced, events accumulate: ' + jr2);
   apply(root, { summary: { did: ['Other session work'] } }, ['zzzz9999']);
   const jr3 = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8');
   assert(jr3.indexOf('session zzzz9999') < jr3.indexOf('session abcd1234') && (jr3.match(/^### /gm) || []).length === 2, 'newest session first');

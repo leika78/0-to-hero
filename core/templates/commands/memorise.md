@@ -15,7 +15,7 @@ Read every `*.md` directly in `~/.claude/handovers/<cwd-slug>/` (slug = the fold
 - `DECISIONS.md ## Proposals`: `[fact]` lines (a new key, or a changed value) and `[fix]` lines (a code/hook/test change that would make a rule unnecessary — a hypothesis, never applied by the scribe).
 - `DECISIONS.md ## Facts (current)`: lines carrying `⚠ disputed → <new> (<date>)` (the scribe saw a different value and did not overwrite).
 - Every `<workspace>/LEARNINGS.md ## Candidates` (root `LEARNINGS.md` in a light project).
-- With `--all`: the `JOURNAL.md` block(s) of this session — their dated events (`- YYYY-MM-DD — … [toolu_…]`) are Ledger material.
+- With `--all`: the `JOURNAL.md` block(s) of this session — their dated `decision:` notes and the older untyped events (`- YYYY-MM-DD — … [toolu_…]`) are Ledger material; the other notes (`discovery:`, `gotcha:`, `bugfix:`, `change:`) are history and stay in the journal.
 
 Dedupe first: the same key or the same rule in other words is one item. Nothing in `CONTEXT.md` is edited by this command: the scribe owns `## Current state`, `JOURNAL.md` is the history.
 

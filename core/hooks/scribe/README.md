@@ -1,7 +1,8 @@
 # Memory scribe (v0.5 — sorter, journal, no nag)
 
 Background scribe that reads each session's transcript delta and writes the memory files while the session runs.
-It writes **history** directly — `JOURNAL.md` (one block per session: did, next, dated events), `<ws>/CONTEXT.md ## Current state`
+It writes **history** directly — `JOURNAL.md` (one block per session: did, next, and up to 8 notes per run: one dated line
+each, typed `discovery` / `gotcha` / `bugfix` / `decision` / `change`, with its evidence id, no review), `<ws>/CONTEXT.md ## Current state`
 (one block per recent session) and an `## Active Learnings` rule only when it quotes the owner's own correction — and queues
 **every judgement** for the owner: a new `Facts` key or a changed value → `DECISIONS.md ## Proposals` (the Facts line gets
 `⚠ disputed → new (date)`, never overwritten), a `[fix]` hypothesis → `## Proposals`, at most one rule candidate per run →
@@ -16,7 +17,7 @@ Rationale and measured numbers: `core/decisions/adr-archive.md` (2026-11-08, 202
 | `scribe-writer.js` | Bounded, deterministic writes. Only the destinations above, atomic temp+rename, fuzzy dedup of candidates, a proposal the owner already settled is never queued again, `expire()` (30 / 60 days, plus lines already tagged with an outcome and leftover `[log]` proposals). `node scribe-writer.js --selftest`. |
 | `scribe-worker.check.js` | Offline check of verify / signal filter / cursor / lock. `node scribe-worker.check.js`. |
 | `root.check.js` | Offline check of project-root resolution (JS and the bash injector agree, a `cd` does not move it) and of the light-project `.` workspace. `node root.check.js`. |
-| `../inject-journal.sh` | Second `SessionStart` hook: coverage line, 3 newest journal blocks, one index line (date + first summary line) per older block (15), Current state per workspace, under its own 9k cap. |
+| `../inject-journal.sh` | Second `SessionStart` hook: coverage line, 3 newest journal blocks (summary + next), the project's 30 newest notes whatever their session, one index line (date + first summary line) per older block (15), Current state per workspace, under its own 9k cap (index lines go first, then Current state, then the oldest notes). |
 | `file-memory.js` | `PreToolUse` hook (`Read\|Edit\|MultiEdit\|Write\|NotebookEdit`): before the session touches a file, injects the journal blocks whose `- Files:` line lists it or whose text names it, plus the Facts / Ledger / Active-rule lines naming it. Once per session (and subagent) per file, ≤ 2.5k chars, silent when nothing matches. Also `filesTouched()`, which the worker uses to fill the `- Files:` line from the tool calls (main transcript + subagents, failed calls excluded), and `--backfill [--apply] <root>…` for blocks written before. |
 | `file-memory.check.js` | Offline check of the files read from tool calls, the Files line, the hook, the startup index and the backfill. `node file-memory.check.js`. |
 
@@ -56,12 +57,14 @@ On Windows use the full `node.exe` path (and a hidden-console launcher if the St
 |----------|---------|---------|
 | `SCRIBE_ROOTS` | unset = every Durcir project | `;`-separated folders whose projects are watched |
 | `SCRIBE_MODEL` | `sonnet` | model for the one call per run |
-| `SCRIBE_DAILY_TOKENS` | 2 000 000 | machine-wide daily cap, all projects |
-| `SCRIBE_SESSION_TOKENS` | 300 000 | per-session cap; raise one session by writing a number into `~/.claude/scribe/<slug>/budget-<session_id>` |
+| `SCRIBE_DAILY_TOKENS` | 3 000 000 | machine-wide daily cap, all projects |
+| `SCRIBE_SESSION_TOKENS` | 600 000 | per-session cap; raise one session by writing a number into `~/.claude/scribe/<slug>/budget-<session_id>` |
 | `MAX_APPLY_FAILURES` (constant) | 3 | a delta whose apply reports an error (missing destination, race) is re-sent up to 3 times, then dropped with an alert naming the loss |
 | `CANDIDATE_DAYS` / `PROPOSAL_DAYS` (constants) | 30 / 60 | expiry of an unreviewed candidate / proposal to its archive section |
 | `JOURNAL_BLOCKS`, `JOURNAL_BLOCK_CAP`, `JOURNAL_STATE_CAP`, `JOURNAL_MAX_CHARS` | 3, 1800, 500, 9000 | `inject-journal.sh` budgets (chars, whole lines only) |
 | `JOURNAL_INDEX`, `JOURNAL_INDEX_CAP` | 15, 160 | older blocks listed as one index line each (0 = none), chars of summary per line |
+| `JOURNAL_NOTES`, `JOURNAL_NOTE_CAP` | 30, 170 | newest notes of the project injected at start (0 = none), chars per note |
+| `MAX_NOTES` (constant) | 8 | notes the scribe may write per run |
 | `FILE_MEMORY_CAP` | 2500 | chars injected by `file-memory.js` per file |
 | `SCRIBE_DISCORD_WEBHOOK` | unset | webhook URL for budget / failure alerts |
 | `SCRIBE_DISCORD_ENV` | unset | alternative: a `KEY=VALUE` file holding `DISCORD_WEBHOOK_AUDIT` or `DISCORD_WEBHOOK_SESSIONS` |

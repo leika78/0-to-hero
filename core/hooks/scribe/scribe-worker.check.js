@@ -60,6 +60,7 @@ assert.deepStrictEqual(proposal.summary, { did: ['deployed the thing'], next: 'w
 assert.deepStrictEqual(proposal.fixes.map(f => f.text), ['guard in build()'], 'fix needs a successful id');
 assert.deepStrictEqual(proposal.facts.map(f => `${f.key}=${f.value}`), ['Prod host=hetzner'], 'keyed facts need a successful id; fake id dropped');
 assert.deepStrictEqual(proposal.log.map(f => f.text), ['prod deploy tomorrow', 'by id', 'RSS shuts down 2099-01-01 (future date: scheduled, not yet happened)', 'launch set for 2099-01-01 (future date: scheduled, not yet happened)'],'facts need a successful id or a real quote; future-dated fact dropped, future date in text tagged');
+assert.strictEqual(verify({ log: Array.from({ length: 11 }, (_, i) => ({ date: '2026-11-09', type: 'gotcha', text: `note ${i}`, evidence: 'toolu_real1' })) }, delta, ['web']).proposal.log.length, 8, 'notes are written with no review: capped per run');
 assert.strictEqual(proposal.candidates.length, 1, 'collection budget: one candidate per run');
 assert.strictEqual(proposal.candidates[0].owner_correction, 'ne lance jamais npm test sans build avant', 'the owner-corrected candidate wins the slot, imperative words kept');
 assert.strictEqual(proposal.candidates[0].incident, 'toolu_real2');

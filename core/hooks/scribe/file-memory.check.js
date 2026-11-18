@@ -143,6 +143,9 @@ if (spawnSync(bash, ['-c', 'command -v awk'], { encoding: 'utf8' }).status === 0
   const idx = c.split('## Older sessions')[1] || '';
   assert(/^- 2026-10-22 — Summary number 3 /m.test(idx) && /^- 2026-10-08 — Summary number 17 /m.test(idx) && !/2026-10-07/.test(idx), '15 index lines, next 15 blocks: ' + idx);
   assert(!/Next:|event \d/.test(idx), 'index uses the summary line, not Next or events');
+  const notes = (c.split('## Recent notes')[1] || '').split('\n## ')[0];
+  assert(/^- 2026-10-01 — event 0$/m.test(notes) && /event 24$/m.test(notes) && !notes.includes('toolu_e'), 'notes: newest dated lines of every session, evidence id dropped: ' + notes);
+  assert(!/event \d/.test(c.split('## Recent notes')[0]), 'a note is listed once, not again inside its full block');
   const long = idx.split('\n').find(l => l.includes('number 5 '));
   assert(long && long.length <= 160 + 20 && long.endsWith(' …'), 'long summary cut on a word: ' + long);
   const r2 = spawnSync(bash, [path.join(__dirname, '..', 'inject-journal.sh')], { encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root, HOME: home, JOURNAL_MAX_CHARS: '1500' } });
