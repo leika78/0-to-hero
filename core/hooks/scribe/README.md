@@ -57,7 +57,7 @@ On Windows use the full `node.exe` path (and a hidden-console launcher if the St
 |----------|---------|---------|
 | `SCRIBE_ROOTS` | unset = every Durcir project | `;`-separated folders whose projects are watched |
 | `SCRIBE_MODEL` | `sonnet` | model for the one call per run |
-| `SCRIBE_DAILY_TOKENS` | 3 000 000 | machine-wide daily cap, all projects |
+| `SCRIBE_DAILY_TOKENS` | 4 000 000 | machine-wide daily cap, all projects |
 | `SCRIBE_SESSION_TOKENS` | 600 000 | per-session cap; raise one session by writing a number into `~/.claude/scribe/<slug>/budget-<session_id>` |
 | `MAX_APPLY_FAILURES` (constant) | 3 | a delta whose apply reports an error (missing destination, race) is re-sent up to 3 times, then dropped with an alert naming the loss |
 | `CANDIDATE_DAYS` / `PROPOSAL_DAYS` (constants) | 30 / 60 | expiry of an unreviewed candidate / proposal to its archive section |

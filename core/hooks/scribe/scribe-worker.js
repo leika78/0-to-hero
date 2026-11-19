@@ -32,7 +32,7 @@ if (!slug) process.exit(1);
 
 const STATE_ROOT = path.join(os.homedir(), '.claude', 'scribe');
 const STATE = path.join(STATE_ROOT, slug);
-const DAILY_BUDGET = Number(process.env.SCRIBE_DAILY_TOKENS || 3_000_000);   // all projects together (≈ 110 lean runs)
+const DAILY_BUDGET = Number(process.env.SCRIBE_DAILY_TOKENS || 4_000_000);   // all projects together (≈ 145 lean runs)
 // Per session_id. 300k cut the journal after about an hour of active work, on the long sessions where the most happens
 // (2026-11-18); the daily cap is the guard against a runaway.
 const SESSION_BUDGET = Number(process.env.SCRIBE_SESSION_TOKENS || 600_000);
