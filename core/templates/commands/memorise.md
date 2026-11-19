@@ -21,7 +21,15 @@ Dedupe first: the same key or the same rule in other words is one item. Nothing 
 
 ## 2. Decide — from reading, a question only when you cannot decide
 
-The recommendation is the decision (in practice the owner follows it almost every time, and every decision is archived, never deleted): for each item reach a verdict from READING (the code, the hooks, `## Facts`, `CLAUDE.md`), never from memory, and apply it. Most items end archived; a few are kept. Ask only about the items you genuinely cannot settle: one `AskUserQuestion` per topic that has such items, `multiSelect`, one line per item with its evidence id and what makes it undecided; selected = keep, unselected = archive. No undecided item → no question at all.
+The recommendation is the decision (in practice the owner follows it almost every time, and every decision is archived, never deleted): for each item reach a verdict from READING (the code, the hooks, `## Facts`, `CLAUDE.md`), never from memory, and apply it. Most items end archived; a few are kept. Ask only about the items you genuinely cannot settle (undecided items and fixes you will not apply alone), as **Asking the owner** below says. No undecided item → no question at all.
+
+**Asking the owner.** For each item, first gather four fields from reading:
+- **Where it comes from**: the date and what happened, in one sentence. Grep the item's `toolu_…` id in `~/.claude/projects/*/*.jsonl` to find its session, then read that session's `JOURNAL.md` block (`### <date> — session <first 8 chars>`).
+- **What changes** for the owner if they say yes, in daily use.
+- **Your advice**: yes or no.
+- **Why you hesitate**: the one thing reading could not settle.
+
+Then one `AskUserQuestion` call with one question per item, up to 4. Each question has two options: the yes, then the no, with ` (Recommandé)` (or ` (Recommended)`) on the label of the one you advise. Question text: where it comes from + why you hesitate, at most two sentences. The yes description: what changes. Past 4 items, apply your advice to the rest and list them in the report so the owner can reverse one. Write for the owner, not for the memory system: in the conversation's language; start from the symptom they lived through, not the mechanism; no internal words (Ledger, Gotcha, candidate, proposal, L3, hook, `toolu_…` ids, batch or lot names, a file path when a plain name will do). An item already archived with an outcome is never asked again. An item the owner never lived through (it only concerns Claude's own tooling or tests, nothing they saw break) is never asked: decide it alone and list it in the report.
 
 1. **Disputed Facts** — per key, `Key: current → proposed (date, evidence)`. Check the value where it lives (config, code, a command) when it can be checked, and take what is true now; otherwise take the value backed by a tool id and the newer date. Both values are owner statements and nothing can be checked → undecided, ask. The losing proposal is archived.
 2. **New facts** — keep a fact only if it is a durable setting of the project that a future session would get wrong without it, still true when checked, and not already in `## Facts` or `CLAUDE.md`. A passing status, a version, a count, a draft's path, a design in progress → archive.

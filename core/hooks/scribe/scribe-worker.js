@@ -52,7 +52,7 @@ const WRITE_TOOLS = /^TOOL \S+ (Edit|MultiEdit|Write|NotebookEdit|Bash|PowerShel
 const IMPERATIVE = /\b(jamais|toujours|never|always|plus jamais|arr[êe]te|stop|il faut|faut|ne .{1,40} (pas|plus)|don'?t|do not|must)\b/i;
 
 const log = line => { try { fs.appendFileSync(path.join(STATE, 'worker.log'), `${new Date().toISOString()} ${line}\n`); } catch {} };
-const report = text => { if (DRY) { console.log(`[dry-run report] ${text}`); return; } try { fs.appendFileSync(path.join(STATE, 'report.txt'), text + '\n', 'utf8'); } catch {} };
+const report = text => { if (DRY) { console.error(`[dry-run report] ${text}`); return; } try { fs.appendFileSync(path.join(STATE, 'report.txt'), text + '\n', 'utf8'); } catch {} };
 const journal = obj => { if (!DRY) try { fs.appendFileSync(path.join(STATE, 'journal.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...obj }) + '\n'); } catch {} };
 // Budget / failure alerts: systemMessage at the next Stop, plus Discord when configured. Fail-open.
 // SCRIBE_DISCORD_WEBHOOK = the webhook URL itself, or SCRIBE_DISCORD_ENV = a KEY=VALUE file holding
@@ -272,7 +272,9 @@ function runModel(root, prompt) {
   if (d.is_error) return { ...meta, proposal: null, error: `claude error: ${String(d.result).slice(0, 300)}` };
   let text = String(d.result || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = text.indexOf('{'); if (start > 0) text = text.slice(start);
-  try { return { ...meta, proposal: JSON.parse(text), error: null }; } catch { return { ...meta, proposal: null, error: `proposal is not JSON: ${text.slice(0, 300)}` }; }
+  // Prose after the closing brace (« Note: … ») is cut; the log keeps head AND tail so the next failure shows its cause.
+  for (const t of [text, text.slice(0, text.lastIndexOf('}') + 1)]) { try { return { ...meta, proposal: JSON.parse(t), error: null }; } catch {} }
+  return { ...meta, proposal: null, error: `proposal is not JSON (${text.length} chars): ${text.slice(0, 200)} … ${text.slice(-200)}` };
 }
 
 // Drop anything whose evidence is not literally in the delta. state/facts need a SUCCESSFUL result id
@@ -450,7 +452,7 @@ function main() {
     // the Files line of the journal block, read by the file-memory hook. A failure costs the line, never the run.
     try { ok.files = fileMemory.journalFiles(root, batch.flatMap(b => fileMemory.filesTouched(b.e.transcript_path))); } catch (e) { log(`files failed: ${e.message}`); }
     log(`${ids.map(i => i.slice(0, 8)).join('+')}: delta ${delta.length} chars → ${res.tokens} tokens, $${res.cost.toFixed(3)} list, ${Math.round((Date.now() - t0) / 1000)}s, ${res.turns} turn(s), ${rejected} item(s) rejected (evidence/workspace)`);
-    if (DRY) { console.log(JSON.stringify(ok, null, 2)); console.log(`[dry-run] tokens=${res.tokens} cost=$${res.cost.toFixed(3)} ms=${res.ms} rejected=${rejected}`); return; }
+    if (DRY) { console.log(JSON.stringify(ok, null, 2)); console.error(`[dry-run] tokens=${res.tokens} cost=$${res.cost.toFixed(3)} ms=${res.ms} rejected=${rejected}`); return; }
     const done = writer.apply(root, ok, ids);
     q = []; // written: a throw from here on must not replay (and pay) the batch again
     // Deterministic hygiene, no model: expired candidates / proposals go to their archive sections.

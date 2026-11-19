@@ -166,5 +166,11 @@ assert.ok(!fs.existsSync(flushCur) && fs.readFileSync(flushQ, 'utf8').includes('
 spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'fl', '--flush'], { env: stubEnv, encoding: 'utf8' });
 assert.strictEqual(JSON.parse(fs.readFileSync(flushCur, 'utf8')).line, 1, '--flush reads the small delta');
 assert.strictEqual(fs.existsSync(flushQ) ? fs.readFileSync(flushQ, 'utf8') : '', '', '--flush empties the queue');
+// A proposal followed by prose is still applied (2026-11-19: one scribe call lost to trailing text).
+const trail = path.join(tmp, 'stub-trail.js');
+fs.writeFileSync(trail, `console.log(JSON.stringify({ result: JSON.stringify({ state: [], summary: null, facts: [], log: [], fixes: [], candidates: [], skipped_reason: 'stub' }) + '\\n\\nNote: rien à garder.', usage: { input_tokens: 10, output_tokens: 1 } }));`);
+queue('tr', [['t1', trB]]);
+spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'tr'], { env: { ...env, SCRIBE_CLAUDE_BIN: trail }, encoding: 'utf8' });
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('tr'), 'cursors', 't1.json'), 'utf8')).line, 1, 'trailing prose after the JSON is tolerated');
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-worker.check: ok');

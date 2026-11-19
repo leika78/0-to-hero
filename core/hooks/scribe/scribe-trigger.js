@@ -82,8 +82,9 @@ process.stdin.on('end', () => {
         `If your last message asked the owner something, or left their request unfinished, do nothing and stop: that comes first. ` +
         `Otherwise launch ONE background subagent briefed to follow ~/.claude/commands/memorise.md for the project root ${cwd}, with two changes: it asks no question and applies no fix. ` +
         `It applies every decision it can reach from reading, and returns (a) one line per decision, (b) the items it could not settle, (c) the fixes it would apply (file, size of the change). ` +
+        `Each (b) and (c) item carries the four fields of memorise.md "Asking the owner": where it comes from, what changes, its advice, why it hesitates. ` +
         `Tell the owner in one line that the memory inbox is being processed, then end your turn. When the subagent reports: print (a) in a few lines; ` +
-        `if (b) or (c) is not empty, ask ONE AskUserQuestion (multiSelect) covering them and apply the answer as memorise.md says; then delete ${path.join(dir, 'pending.json')}.` }));
+        `if (b) or (c) is not empty, ask ONE AskUserQuestion written as memorise.md "Asking the owner" says and apply the answer as memorise.md says; then delete ${path.join(dir, 'pending.json')}.` }));
       process.exit(0);
     }
 
