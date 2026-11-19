@@ -28,6 +28,7 @@ Open-source tool to structure your Claude workflow into efficient workspaces wit
 - `docs/0-to-hero-spec.md` (local only, gitignored) is a historical build doc (deprecated) — for current formats use core/ARCHITECTURE.md + core/templates/
 - `DECISIONS.md` is gitignored on purpose: its ledger holds machine-local facts. Project decisions worth publishing go to core/decisions/adr-archive.md
 - Language: conversations in French, all written content (files, commits, code, comments) in English
+- Before pushing a change kit users will notice, add an `UPDATES.md` entry (what changes for them and why, everyday words, no technical terms) and bump `KIT_VERSION` in `core/hooks/inject-journal.sh` to its date; show the entry to the owner before the push. Installed kits read that file and Claude tells their user
 
 ## Repo layout
 

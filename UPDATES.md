@@ -1,0 +1,10 @@
+# Updates
+
+<!-- Read by every installed kit (inject-journal.sh fetches this file once a day) and told to its user by Claude.
+     Newest first. One entry per change a user will notice: "## YYYY-MM-DD", then 1 to 3 short lines saying what
+     changes for them and why, in everyday words (no file names, no technical terms).
+     Each new entry also bumps KIT_VERSION in core/hooks/inject-journal.sh to the same date. -->
+
+## 2026-11-19
+- When Claude's memory needs your opinion, it now tells you where the question comes from and what it would choose, in simple words.
+- From now on, Claude tells you when the kit has a new version, and why. Say yes and it installs it for you, in all your projects at once.
