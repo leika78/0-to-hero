@@ -47,7 +47,7 @@ Never put session context in native memory. A fact of record goes to the `DECISI
 This project has the learning layer enabled (Durcir stack v2 — a background scribe writes memory while the session runs, rules enter only through the owner).
 - **L1 — workspace rules** → `<workspace>/LEARNINGS.md` → `## Active Learnings` (written by the owner in `/memorise`, or from the owner's own correction quoted in session; auto-injected, ~5 per workspace)
 - **L3 — cross-workspace doctrine** → Gotchas section below (fed by `/gotcha` only, cap 12)
-- **Durable project facts** → `DECISIONS.md` → `## Facts (current)` (states, injected whole, one value per key, written by `/memorise`; the scribe only marks a line `⚠ disputed → new`) and `## Ledger` (dated decisions, 5 newest injected, written by `/memorise`)
+- **Durable project facts** → `DECISIONS.md` → `## Facts (current)` (states, injected whole, one value per key, written by `/memorise`, or by the scribe when the owner stated the fact in their own words; a fact the scribe inferred only marks a line `⚠ disputed → new`) and `## Ledger` (dated decisions, 5 newest injected, written by `/memorise`)
 - **History** → `JOURNAL.md` (one block per session written by the scribe: did, next, dated events, the files really edited) and `<workspace>/CONTEXT.md ## Current state` (one block per recent session)
 - Archived rules and the drift log live in `LEARNINGS.md` (`## Archived Learnings`, `## Drift log`) — kept, not injected; a candidate unreviewed 30 days and a proposal unreviewed 60 days archive themselves
 - Agents apply all rule layers at task start via the Pre-work checklist in their `AGENT.md`

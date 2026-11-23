@@ -26,7 +26,7 @@ done
 # 0. Kit updates: the repo's UPDATES.md is fetched in the background at most once a day (never delays the start) into
 #    ~/.claude/kit-updates/; entries newer than KIT_VERSION (the kit this hook was installed from) are told to the user,
 #    at most once a day. ZERO_TO_HERO_NO_UPDATE_CHECK=1 turns the fetch off.
-KIT_VERSION=2026-11-19   # = the newest UPDATES.md entry (kit-updates.check.js asserts it)
+KIT_VERSION=2026-11-23   # = the newest UPDATES.md entry (kit-updates.check.js asserts it)
 KIT_URL=${ZERO_TO_HERO_UPDATES_URL:-https://raw.githubusercontent.com/narsixlive/0-to-hero/master/UPDATES.md}
 upd_dir="${HOME}/.claude/kit-updates"
 kit=""

@@ -3,9 +3,10 @@
 Background scribe that reads each session's transcript delta and writes the memory files while the session runs.
 It writes **history** directly — `JOURNAL.md` (one block per session: did, next, and up to 8 notes per run: one dated line
 each, typed `discovery` / `gotcha` / `bugfix` / `decision` / `change`, with its evidence id, no review), `<ws>/CONTEXT.md ## Current state`
-(one block per recent session) and an `## Active Learnings` rule only when it quotes the owner's own correction — and queues
-**every judgement** for the owner: a new `Facts` key or a changed value → `DECISIONS.md ## Proposals` (the Facts line gets
-`⚠ disputed → new (date)`, never overwritten), a `[fix]` hypothesis → `## Proposals`, at most one rule candidate per run →
+(one block per recent session), an `## Active Learnings` rule only when it quotes the owner's own correction, and a `Facts`
+value only when the owner stated it in their own words (traced in `## Proposals archive` with the old value) — and queues
+**every judgement** for the owner: a new `Facts` key or a changed value it inferred → `DECISIONS.md ## Proposals` (the Facts
+line gets `⚠ disputed → new (date)`, never overwritten), a `[fix]` hypothesis → `## Proposals`, at most one rule candidate per run →
 `<ws>/LEARNINGS.md ## Candidates`. Unreviewed proposals expire to `## Proposals archive` after 60 days, candidates to
 `## Archived Learnings` after 30: the inbox is bounded without a human, and nothing in the session ever asks for `/memorise`.
 Rationale and measured numbers: `core/decisions/adr-archive.md` (2026-11-08, 2026-11-09, 2026-11-11).

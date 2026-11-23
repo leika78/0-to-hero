@@ -136,7 +136,7 @@ function applyJournal(root, j, sessions = [], events = [], files = []) {
 // ## Facts (current): one line per key, written by the owner (/memorise). Bounded by the number of keys, so the hook
 // injects it whole. Format: `- **Key**: value (since YYYY-MM-DD)`; a scribe-detected change adds ` ⚠ disputed → new (date)`.
 const normKey = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const FACTS_HEADER = '## Facts (current)\n<!-- One line per key, written by /memorise. Injected whole at SessionStart: only what is true now. -->\n<!-- Format: `- **Key**: value (since YYYY-MM-DD)` — reuse a key when the same thing changes. The scribe never overwrites a value: it marks the line `⚠ disputed → new (date)` and queues a proposal. -->\n\n';
+const FACTS_HEADER = '## Facts (current)\n<!-- One line per key, written by /memorise. Injected whole at SessionStart: only what is true now. -->\n<!-- Format: `- **Key**: value (since YYYY-MM-DD)` — reuse a key when the same thing changes. The scribe writes a value only when the owner stated it in their own words (traced in ## Proposals archive); otherwise it marks the line `⚠ disputed → new (date)` and queues a proposal. -->\n\n';
 const PROPOSALS_HEADER = '## Proposals\n<!-- Written by the memory scribe, NOT injected: a new Facts key, a changed value (the Facts line is marked ⚠ disputed), or a [fix] hypothesis. -->\n<!-- /memorise drains this section: y → Facts, n → ## Proposals archive; unreviewed 60 days → archive. Format: `- [fact|fix] … (date) [evidence] why: …` -->\n\n';
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 const isToolId = s => /^toolu_[A-Za-z0-9_-]+$/.test(String(s || ''));
@@ -156,7 +156,7 @@ function appendTo(text, heading, line) {
 // Facts are never overwritten by the scribe (Mem0 v3 lesson: automatic UPDATE by a small extractor fails silently, and
 // Facts are injected everywhere). A changed value on an EXISTING key: the line gets a `⚠ disputed → new (date)` suffix
 // (so every session sees the doubt and both values) and a proposal is queued; the owner settles it in /memorise.
-// A new key, or any non-tool evidence, is a proposal only.
+// A new key proven by a tool is a proposal only; an owner-quoted fact is written (applyOwnerFact, below).
 const DISPUTE = /\s*⚠ disputed → .*$/;
 function applyFactKV(root, f) {
   if (!f.key || !f.value || !f.evidence || !/^\d{4}-\d{2}-\d{2}$/.test(f.date || '')) return null;
@@ -167,12 +167,13 @@ function applyFactKV(root, f) {
   const text = readText(file);
   const lines = (sectionBody(text, 'Facts') || '').split('\n');
   const idx = lines.findIndex(l => normKey((l.match(/^- \*\*([^*]+)\*\*:/) || [])[1]) === normKey(key));
+  if (/^owner said:/i.test(String(f.evidence))) return applyOwnerFact(file, text, key, value, f);
   if (idx < 0 || !isToolId(f.evidence)) return applyProposal(root, 'fact', f);
   const current = lines[idx].replace(DISPUTE, '');
   const old = (current.match(/^- \*\*[^*]+\*\*: (.*?)(?: \(since \d{4}-\d{2}-\d{2}\))?$/) || [, ''])[1].trim();
   if (old === value) return null;                               // strict: `1.5` and `15` are different values
   const queued = applyProposal(root, 'fact', f);                // proposal first (same file, re-read below)
-  if (queued === false) return null;                            // the owner already declined this very value: no new dispute
+  if (!queued) return null;                                     // declined by the owner (false) or same evidence restated (null): no new dispute
   const text2 = readText(file);
   const lines2 = (sectionBody(text2, 'Facts') || '').split('\n');
   const marked = `${current} ⚠ disputed → ${clip(value, 120)} (${f.date})`;
@@ -181,6 +182,37 @@ function applyFactKV(root, f) {
   atomicWrite(file, replaceSection(text2, 'Facts', lines2.join('\n')));
   return `fact disputed: ${key}`;
 }
+
+// Owner-quoted fact (owner 2026-11-23: « laisser passer les facts je suis ok »): the worker already checked the quote is
+// verbatim in the owner's own messages, so the value is written straight to ## Facts, like an owner-quoted rule goes
+// straight to Active Learnings. Facts inferred by the scribe (tool evidence) still queue. The write is traced in
+// ## Proposals archive with the previous value, so /memorise can see it and revert it. A value the owner declined stays out.
+function applyOwnerFact(file, text, key, value, f) {
+  const content = `**${key}**: ${value} (${f.date})`;
+  if (declinedBefore(text, 'fact', content)) return null;
+  text = ensureSection(text, 'Facts', FACTS_HEADER, /^## Ledger/m);
+  if (!text) return 'fact error: no ## Ledger in DECISIONS.md to anchor ## Facts';
+  const lines = sectionBody(text, 'Facts').split('\n');
+  const idx = lines.findIndex(l => normKey((l.match(/^- \*\*([^*]+)\*\*:/) || [])[1]) === normKey(key));
+  const line = `- **${key}**: ${value} (since ${f.date})`;
+  let old = null;
+  if (idx >= 0) {
+    old = (lines[idx].replace(DISPUTE, '').match(/^- \*\*[^*]+\*\*: (.*?)(?: \(since \d{4}-\d{2}-\d{2}\))?$/) || [, ''])[1].trim();
+    if (old === value) return null;
+    lines[idx] = line;
+    text = replaceSection(text, 'Facts', lines.join('\n'));
+  } else text = appendTo(text, 'Facts', line);
+  if (sectionBody(text, 'Proposals archive') === null) text = /^## ADR archive/m.test(text) ? text.replace(/^## ADR archive/m, ARCHIVE_HEADER + '## ADR archive') : text.replace(/\s*$/, '') + '\n\n' + ARCHIVE_HEADER;
+  const ev = clip(String(f.evidence).replace(/[\[\]\n]/g, ' ').trim(), 120);
+  text = appendTo(text, 'Proposals archive', `- [fact] ${content} [${ev}] (written ${today()}: owner quote; ${old === null ? 'new key' : `was: ${clip(old, 120)}`})`);
+  atomicWrite(file, text);
+  return `fact written (owner quote): ${key}`;
+}
+// Same content already settled by the owner in /memorise (whatever the day it is seen again).
+const propHead = l => l.slice(0, l.indexOf(' [', 9) > 0 ? l.indexOf(' [', 9) : undefined).replace(/^- \[\w+\] /, '');
+const propUndated = s => normFact(s.replace(/ \(\d{4}-\d{2}-\d{2}\)$/, ''));
+const declinedBefore = (text, kind, content) => (sectionBody(text, 'Proposals archive') || '').split('\n')
+  .some(l => l.startsWith(`- [${kind}] `) && /\((declined|done|accepted|parked) \d{4}-/.test(l) && propUndated(propHead(l)) === propUndated(content));
 
 // Proposal for /memorise: `- [fact] **Key**: value (date) [evidence] why: …`, `- [fix] text [evidence]` (a hypothesis
 // that a code/hook/test change would make a rule unnecessary — never applied by the scribe), or a legacy `- [log] …`.
@@ -204,12 +236,10 @@ function applyProposal(root, kind, f) {
   if (!text) return 'proposal error: no ## Ledger in DECISIONS.md to anchor ## Proposals';
   const ev = clip(String(f.evidence).replace(/[\[\]\n]/g, ' ').trim(), 80);
   const why = f.why ? ` why: ${clip(String(f.why).replace(/\n/g, ' ').trim(), 160)}` : '';
-  const head = l => l.slice(0, l.indexOf(' [', 9) > 0 ? l.indexOf(' [', 9) : undefined).replace(/^- \[\w+\] /, '');
   // Already settled by the owner in /memorise (same content, whatever the day it is seen again): never queued twice.
-  const undated = s => normFact(s.replace(/ \(\d{4}-\d{2}-\d{2}\)$/, ''));
-  if ((sectionBody(text, 'Proposals archive') || '').split('\n').some(l => l.startsWith(`- [${kind}] `) && /\((declined|done|accepted|parked) \d{4}-/.test(l) && undated(head(l)) === undated(content))) return false;
+  if (declinedBefore(text, kind, content)) return false;
   const lines = sectionBody(text, 'Proposals').split('\n');
-  const idx = lines.findIndex(l => l.startsWith(`- [${kind}] `) && normFact(head(l)) === normFact(content));
+  const idx = lines.findIndex(l => l.startsWith(`- [${kind}] `) && normFact(propHead(l)) === normFact(content));
   if (idx >= 0) {
     if (lines[idx].includes(ev)) return null;                              // same evidence restated
     lines[idx] = lines[idx].replace(/\]( why: |$)/, `, ${ev}]$1`);         // evidence accumulates in the bracket
@@ -378,7 +408,7 @@ if (require.main === module && process.argv.includes('--selftest')) {
       { date: `${old(1)}`, key: 'prod-host', value: 'bbb', evidence: 'toolu_2' },                 // existing key, new value → disputed + proposal, never overwritten
       { date: `${old(1)}`, key: 'Price', value: '1.5', evidence: 'toolu_2' },                     // same value → nothing
       { date: `${old(1)}`, key: 'Domain', value: 'example.org', evidence: 'toolu_2' },            // new key → proposal
-      { date: `${old(1)}`, key: 'Prod host', value: 'ddd', evidence: 'owner said: on passe sur ddd', why: 'cheaper' },   // owner words → proposal only
+      { date: `${old(1)}`, key: 'Prod host', value: 'ddd', evidence: 'owner said: on passe sur ddd', why: 'cheaper' },   // owner words → written to Facts (2026-11-23)
     ],
     fixes: [{ workspace: 'web', text: 'guard the empty id in parse()', evidence: 'toolu_3' }, { workspace: 'web', text: 'guard the empty id in parse()', evidence: 'toolu_4' }],
     log: [{ date: `${old(1)}`, text: 'launch decided for March', evidence: 'toolu_2', why: 'owner wants Q1' }, { date: `${old(1)}`, text: 'y'.repeat(346), evidence: 'toolu_8' }],
@@ -403,9 +433,10 @@ if (require.main === module && process.argv.includes('--selftest')) {
   assert(state.startsWith('\nUpdated: ') && state.includes('(scribe, session abcd1234+efgh5678). A\nB\nNext: C') && state.includes('session other123). parallel work'), 'own block written, parallel session kept: ' + state);
   assert(!state.includes('too old') && !state.includes('legacy untagged') && !ctx.includes('NO') && ctx.includes('### 2026-01-01 — x') && ctx.includes('<!-- END BRIEF -->'), 'old/untagged blocks dropped, no-evidence refused, thread + brief intact');
   const facts = sectionBody(dec, 'Facts'), props = sectionBody(dec, 'Proposals'), ledger = sectionBody(dec, 'Ledger');
-  assert(facts.includes(`- **Prod host**: aaa (since 2026-01-01) ⚠ disputed → bbb (${old(1)})`) && facts.includes('- **Price**: 1.5 (since 2026-01-01)') && (facts.match(/^- /gm) || []).length === 2, 'value never overwritten: disputed marker, no new key: ' + facts);
+  assert(facts.includes(`- **Prod host**: ddd (since ${old(1)})`) && facts.includes('- **Price**: 1.5 (since 2026-01-01)') && (facts.match(/^- /gm) || []).length === 2, 'tool value disputed, then owner words written over it, no new key: ' + facts);
+  assert(sectionBody(dec, 'Proposals archive').includes('was: aaa'), 'owner write traced with the old value');
   assert(ledger.trim() === '<!-- c -->\n- 2026-01-01 — other' && dec.includes('## ADR archive\n\n## 2026-01-01 — x\ntext'), 'the scribe never touches the Ledger or the ADR archive: ' + JSON.stringify(ledger));
-  assert(props.includes(`- [fact] **prod-host**: bbb (${old(1)}) [toolu_2]`) && props.includes(`- [fact] **Domain**: example.org (${old(1)}) [toolu_2]`) && props.includes(`- [fact] **Prod host**: ddd (${old(1)}) [owner said: on passe sur ddd] why: cheaper`), 'changed value / new key / owner evidence → proposals: ' + props);
+  assert(props.includes(`- [fact] **prod-host**: bbb (${old(1)}) [toolu_2]`) && props.includes(`- [fact] **Domain**: example.org (${old(1)}) [toolu_2]`) && !props.includes('**Prod host**: ddd'), 'changed value / new key → proposals, owner evidence not queued: ' + props);
   assert(props.includes('- [fix] [web] guard the empty id in parse() (') && props.includes('[toolu_3, toolu_4]') && !props.includes('seen ×'), 'fix hypothesis queued once, evidence accumulates, no counter: ' + props);
   assert(!props.includes('launch decided') && !ledger.includes('launch decided'), 'log items go to the journal, not Proposals nor Ledger');
   assert(jr.startsWith('# Journal\n') && /### \d{4}-\d{2}-\d{2} — session abcd1234\+efgh5678\n- Shipped the guide hub\n- Fixed the byline\n- Next: deploy\n- \d{4}-\d{2}-\d{2} — launch decided for March \[toolu_2\] why: owner wants Q1\n- \d{4}-\d{2}-\d{2} — y{199}… \[toolu_8\]/.test(jr), 'journal block: summary, next, events (clipped): ' + jr);
@@ -452,6 +483,14 @@ if (require.main === module && process.argv.includes('--selftest')) {
   // A fact the owner declined is not queued again when the scribe sees it another day; a different value still is.
   assert(applyFactKV(root, { date: old(0), key: 'Tagged', value: 't', evidence: 'toolu_again' }) === false && !sectionBody(fs.readFileSync(path.join(root, 'DECISIONS.md'), 'utf8'), 'Proposals').includes('Tagged'), 'declined fact stays declined');
   assert(applyFactKV(root, { date: old(0), key: 'Tagged', value: 'other', evidence: 'toolu_again' }) === '+1 proposal (fact)', 'a new value of a declined key is a new proposal');
+  // Owner-quoted fact: written straight to Facts (new key and changed value), traced in the archive with the old value.
+  const dq = () => fs.readFileSync(path.join(root, 'DECISIONS.md'), 'utf8');
+  assert.strictEqual(applyFactKV(root, { date: old(0), key: 'Send window', value: 'weekdays 9-11', evidence: 'owner said: on envoie en semaine de 9h à 11h' }), 'fact written (owner quote): Send window');
+  assert(sectionBody(dq(), 'Facts').includes(`- **Send window**: weekdays 9-11 (since ${old(0)})`) && /\*\*Send window\*\*: weekdays 9-11 .*\(written [\d-]+: owner quote; new key\)/.test(sectionBody(dq(), 'Proposals archive')) && !sectionBody(dq(), 'Proposals').includes('Send window'), 'owner fact, new key: ' + dq());
+  assert.strictEqual(applyFactKV(root, { date: old(0), key: 'send window', value: 'weekdays 9-12', evidence: 'owner said: plutôt jusqu à midi' }), 'fact written (owner quote): send window');
+  assert(sectionBody(dq(), 'Facts').split('\n').filter(l => /send window/i.test(l)).length === 1 && sectionBody(dq(), 'Facts').includes('weekdays 9-12') && sectionBody(dq(), 'Proposals archive').includes('was: weekdays 9-11'), 'owner fact, same key replaced, old value traced: ' + dq());
+  assert.strictEqual(applyFactKV(root, { date: old(0), key: 'Send window', value: 'weekdays 9-12', evidence: 'owner said: plutôt jusqu à midi' }), null, 'owner fact, same value: nothing');
+  assert.strictEqual(applyFactKV(root, { date: old(0), key: 'Tagged', value: 't', evidence: 'owner said: on garde t' }), null, 'owner fact the owner declined in /memorise stays out');
   // Replay of the first proposal: nothing new written (evidence restated), files byte-identical.
   const before = fs.readFileSync(path.join(root, 'DECISIONS.md'), 'utf8');
   const rounds = apply(root, p, ['abcd1234-x', 'efgh5678-y']);

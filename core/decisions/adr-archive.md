@@ -494,3 +494,24 @@ declined as a rule now survives as a note. To re-measure after a week: notes per
 often the owner has to ask whether something was already done.
 
 **Rollback.** `JOURNAL_NOTES=0` hides them at start; the lines stay in the journals, inert.
+
+## 2026-11-23 — Facts the owner states in their own words are written, not queued
+
+Measured on two of the owner's busiest projects (37 sessions, 475 owner messages since 2026-11-11): resuming
+after `/clear` holds without `/memorise`, with a single reminder of work already done. The weak spot was
+elsewhere: a fact the owner stated themselves waited in `## Proposals` until the next `/memorise`. Across
+16 projects, 9 of the 28 waiting lines were of that kind, while an owner-quoted rule already went straight
+to Active Learnings.
+
+**Decision.** A fact whose evidence is `owner said: <quote>` (the worker already checks the quote is
+verbatim in the owner's own messages) is written straight to `## Facts (current)`: new key, or the value
+replaced with `(since date)`. Each write is traced in `## Proposals archive` as
+`(written DATE: owner quote; was: <old value> | new key)`, so `/memorise` and the owner can see it and
+revert it. A value the owner already declined in `/memorise` is not written again. A fact the scribe
+inferred from a tool result is unchanged: it still queues in `## Proposals` and marks the line
+`⚠ disputed`. Owner approval: « laisser passer les facts je suis ok ».
+
+**Not done.** Not retroactive: lines already waiting stay for `/memorise`. Reserving the `bugfix` note
+type for bugs really fixed was measured and dropped (1 wrong label in 84).
+
+**Rollback.** Remove the `owner said:` branch in `applyFactKV` (`scribe-writer.js`); owner facts queue again.

@@ -5,7 +5,8 @@ Two zones, two purposes. Do not mix them.
 - **Facts (current)** — the project as it stands: domain, app name, prod host, accounts,
   pricing, commitments. **One line per key**, replaced in place when the value changes, so the
   section is bounded by the number of keys and **injected whole at every SessionStart**.
-  Written by `/memorise` (you validate). The scribe never overwrites a value: it marks the line
+  Written by `/memorise` (you validate), or by the scribe when you stated the fact in your own words
+  (traced in ## Proposals archive). A value the scribe inferred is never written: it marks the line
   `⚠ disputed → new (date)` and queues a proposal.
 - **Proposals** — the scribe's inbox, NOT injected: a new key, a changed value, a `[fix]`
   hypothesis. `/memorise` reviews it in grouped questions: `y` → Facts, `n` → archive;
@@ -23,10 +24,10 @@ via `/gotcha` (root CLAUDE.md), a workspace one is a Learning in `<workspace>/LE
 
 ## Facts (current)
 <!-- One line per key, written by /memorise. Injected whole at SessionStart: only what is true now. -->
-<!-- Format: `- **Key**: value (since YYYY-MM-DD)` — reuse a key when the same thing changes. The scribe never overwrites a value: it marks the line `⚠ disputed → new (date)` and queues a proposal. -->
+<!-- Format: `- **Key**: value (since YYYY-MM-DD)` — reuse a key when the same thing changes. The scribe writes a value only when the owner stated it in their own words (traced in ## Proposals archive); otherwise it marks the line `⚠ disputed → new (date)` and queues a proposal. -->
 
 ## Proposals
-<!-- Written by the memory scribe, NOT injected: a new Facts key, a changed value (the Facts line is marked ⚠ disputed), or a [fix] hypothesis. -->
+<!-- Written by the memory scribe, NOT injected: a new Facts key or a changed value the scribe inferred (the Facts line is marked ⚠ disputed), or a [fix] hypothesis. A fact the owner stated is written to Facts directly. -->
 <!-- /memorise drains this section: y → Facts, n → ## Proposals archive; unreviewed 60 days → archive. Format: `- [fact|fix] … (date) [evidence] why: …` -->
 
 ## Ledger (facts of record)
