@@ -7,6 +7,7 @@
 
 ## 2026-11-23
 - When you tell Claude a fact about your project in your own words (a price, a host, a name), its memory now keeps it right away instead of waiting for your review.
+- The next memory review lists the facts it kept that way, so you can undo one just by saying it was wrong.
 
 ## 2026-11-19
 - When Claude's memory needs your opinion, it now tells you where the question comes from and what it would choose, in simple words.
