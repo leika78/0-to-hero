@@ -88,6 +88,32 @@ process.stdin.on('end', () => {
       process.exit(0);
     }
 
+    // --settle: called by inject-journal.sh at SessionStart, before it reads JOURNAL.md. After /clear the old session's
+    // end is still in the queue (SessionEnd queued it with flush) or being read by a worker (30-90 s): without a wait the
+    // new session starts without it. Launch the worker if none runs, wait until no ended session of another id is left
+    // and no worker runs, at most SCRIBE_SETTLE_MS. A queue that comes back unchanged (budget held, failing delta) ends
+    // the wait: the coverage line then says what is still queued.
+    if (process.argv.includes('--settle')) {
+      const SETTLE_MS = Number(process.env.SCRIBE_SETTLE_MS || 60_000);
+      const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      const lock = path.join(dir, 'worker.lock'), qf = path.join(dir, 'queue.jsonl');
+      const running = () => { try { return Date.now() - fs.statSync(lock).mtimeMs < LOCK_STALE_MS; } catch { return false; } };
+      const ended = () => { try { return fs.readFileSync(qf, 'utf8').split('\n').filter(l => { try { const e = JSON.parse(l); return e.flush && e.session_id !== j.session_id; } catch { return false; } }).join('\n'); } catch { return ''; } };
+      const t0 = Date.now(), left = () => Date.now() - t0 < SETTLE_MS;
+      // SessionEnd hooks run async: after /clear the old session's entry may land a moment after this hook starts.
+      while (j.source === 'clear' && Date.now() - t0 < 3000 && !running() && !ended()) sleep(250);
+      let seen = null;
+      for (let launches = 0; left();) {
+        if (running()) { sleep(500); continue; }
+        const pend = ended();
+        if (!pend || pend === seen || launches >= 3) break;
+        seen = pend; launches++;
+        spawn(process.execPath, [path.join(__dirname, 'scribe-worker.js'), slug], { detached: true, stdio: 'ignore', windowsHide: true, cwd }).unref();
+        for (const t1 = Date.now(); !running() && ended() === pend && Date.now() - t1 < 5000 && left();) sleep(200);
+      }
+      process.exit(0);
+    }
+
     // 1. queue this turn (SessionEnd = flush: the worker processes the session's delta now,
     //    whatever its size, and the batch gap does not apply)
     const flush = j.hook_event_name === 'SessionEnd';

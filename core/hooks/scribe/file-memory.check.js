@@ -133,7 +133,7 @@ const gitBash = 'C:/Program Files/Git/bin/bash.exe';
 const bash = process.platform === 'win32' && fs.existsSync(gitBash) ? gitBash : 'bash';
 if (spawnSync(bash, ['-c', 'command -v awk'], { encoding: 'utf8' }).status === 0) {
   const j = ['# Journal', ''];
-  for (let i = 0; i < 25; i++) j.push(`### 2026-10-${String(25 - i).padStart(2, '0')} — session ${String(i).padStart(8, '0')}`, `- Summary number ${i} éàü ${'word '.repeat(i === 5 ? 60 : 3)}`, '- Next: n', `- 2026-10-01 — event ${i} [toolu_e]`, '- Files: `x.js`', '');
+  for (let i = 0; i < 25; i++) j.push(`### 2026-10-${String(25 - i).padStart(2, '0')} — session ${String(i).padStart(8, '0')}`, ...(i === 0 || i === 4 ? [`- In short (covers 11 lines): whole session ${i}`] : []), `- Summary number ${i} éàü ${'word '.repeat(i === 5 ? 60 : 3)}`, ...(i === 0 ? Array.from({ length: 10 }, (_, k) => `- later line ${k}`) : []), '- Next: n', `- 2026-10-01 — event ${i} [toolu_e]`, '- Files: `x.js`', '');
   fs.writeFileSync(P('JOURNAL.md'), j.join('\n'));
   const r = spawnSync(bash, [path.join(__dirname, '..', 'inject-journal.sh')], { encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root, HOME: home } });
   assert.strictEqual(r.status, 0, 'inject-journal exits 0: ' + r.stderr);
@@ -142,6 +142,8 @@ if (spawnSync(bash, ['-c', 'command -v awk'], { encoding: 'utf8' }).status === 0
   assert(c.includes('### 2026-10-25') && c.includes('### 2026-10-23') && !c.includes('### 2026-10-22'), '3 full blocks');
   const idx = c.split('## Older sessions')[1] || '';
   assert(/^- 2026-10-22 — Summary number 3 /m.test(idx) && /^- 2026-10-08 — Summary number 17 /m.test(idx) && !/2026-10-07/.test(idx), '15 index lines, next 15 blocks: ' + idx);
+  assert(/^- 2026-10-21 — whole session 4$/m.test(idx), 'index line uses In short when the block has one: ' + idx);
+  assert(c.includes('### 2026-10-25 — session 00000000\n- In short (covers 11 lines): whole session 0\n- Next: n\n- (+5 earlier lines in JOURNAL.md)\n- later line 4\n') && c.includes('- later line 9\n') && !c.includes('later line 3'), 'fixed-size block: In short, Next, count, 6 newest lines: ' + c.split('## Recent notes')[0]);
   assert(!/Next:|event \d/.test(idx), 'index uses the summary line, not Next or events');
   const notes = (c.split('## Recent notes')[1] || '').split('\n## ')[0];
   assert(/^- 2026-10-01 — event 0$/m.test(notes) && /event 24$/m.test(notes) && !notes.includes('toolu_e'), 'notes: newest dated lines of every session, evidence id dropped: ' + notes);

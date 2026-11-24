@@ -29,5 +29,18 @@ assert.strictEqual(out.decision, 'block', '5 pending proposals: block');
 assert.ok(out.reason.startsWith('Memory inbox: 5 item(s) waiting'), out.reason);
 assert.strictEqual(run('s2'), '', 'once per session');
 
+// --settle (SessionStart): an ended session of another id in the queue → the worker is launched and the hook waits for it;
+// the current session's own entries and an empty queue → no wait; a live lock → wait, bounded by SCRIBE_SETTLE_MS.
+const settle = (source, ms = 20000) => { const t = Date.now(); spawnSync(process.execPath, [path.join(__dirname, 'scribe-trigger.js'), '--settle'], {
+  input: JSON.stringify({ hook_event_name: 'SessionStart', source, session_id: 'new', transcript_path: 'x' }), env: { ...env, SCRIBE_SETTLE_MS: String(ms), SCRIBE_CLAUDE_BIN: path.join(tmp, 'no-claude') } }); return Date.now() - t; };
+const qf = path.join(state, 'queue.jsonl');
+fs.writeFileSync(qf, JSON.stringify({ session_id: 'new', transcript_path: path.join(tmp, 'none.jsonl'), cwd: proj, flush: true, ts: Date.now() }) + '\n');
+assert.ok(settle('startup') < 1500, 'own session entry only: no wait');
+fs.writeFileSync(qf, JSON.stringify({ session_id: 'old', transcript_path: path.join(tmp, 'none.jsonl'), cwd: proj, flush: true, ts: Date.now() }) + '\n');
+settle('clear');
+assert.strictEqual(fs.existsSync(qf) ? fs.readFileSync(qf, 'utf8') : '', '', 'ended session drained by the worker the hook launched, before it returns');
+fs.writeFileSync(path.join(state, 'worker.lock'), '1');
+const waited = settle('startup', 1500);
+assert.ok(waited >= 1500 && waited < 5000, 'live lock: waits, bounded: ' + waited);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-trigger.check: ok');

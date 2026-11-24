@@ -1,9 +1,9 @@
 // scribe-writer.js — bounded, deterministic application of a scribe proposal to the memory files.
 // No model call. Allowed destinations and nothing else:
 //   <ws>/CONTEXT.md   ## Current state        (one block per session, the session's own block replaced; others kept 7 days)
-//   JOURNAL.md        one block per session    (summary lines + dated events + a `- Files:` line of the files really edited;
-//                                              the block is re-written at every run of that session; newest first; the 3
-//                                              newest are injected at SessionStart by inject-journal.sh, Files line left out)
+//   JOURNAL.md        one block per session    (In short + Next + did lines, append-only + dated events + a `- Files:` line
+//                                              of the files really edited; re-written at every run of that session; newest
+//                                              first; the 3 newest are injected at SessionStart by inject-journal.sh)
 //   DECISIONS.md      ## Facts (current)      (NEVER overwritten by the scribe: a changed value marks the line `⚠ disputed → new`
 //                                              and queues a proposal; the owner settles it)
 //   DECISIONS.md      ## Proposals            (new key, changed value, fix hypothesis — NOT injected, drained by /memorise)
@@ -106,31 +106,55 @@ function applyState(root, s, sessions = []) {
 // inject-journal.sh reads the 3 newest blocks and the project's newest notes.
 const NOTE_TYPES = ['discovery', 'gotcha', 'bugfix', 'decision', 'change'];
 const JOURNAL_HEADER = '# Journal\n<!-- Written by the memory scribe: one block per session, newest first (summary, next step, dated events with evidence ids). -->\n<!-- The 3 newest blocks are injected at SessionStart. History, not instructions: a line here is what happened, not what to do. -->\n\n';
+// One journal block, parsed: `- In short (covers N lines): …` (N = did lines it sums up), `- Next: …`, did lines
+// (every other `- ` line, oldest first), notes (`- YYYY-MM-DD — …`), the Files line. A legacy block (did lines, then
+// Next) parses the same, with no In short. Several blocks joined: their lines in the order given.
+const IN_SHORT_RE = /^- In short \(covers (\d+) lines?\): /;
+function parseJournalBlock(b) {
+  const lines = String(b).replace(/\r\n/g, '\n').trim().split('\n');
+  const j = { head: lines[0], inShort: null, covers: 0, next: null, did: [], notes: [], files: [] };
+  for (const l of lines.slice(1)) {
+    const m = l.match(IN_SHORT_RE);
+    if (m) { j.inShort = l; j.covers = Number(m[1]); }
+    else if (/^- Next: /.test(l)) j.next = l;
+    else if (fileMemory.FILES_RE.test(l)) j.files.push(l);
+    else if (/^- \d{4}-\d{2}-\d{2} — /.test(l)) j.notes.push(l);
+    else if (l.startsWith('- ')) j.did.push(l.slice(2));
+  }
+  return j;
+}
 // `files` = the paths the batch's sessions really edited (file-memory.js, read from the tool calls, never the model):
 // the block's last line `- Files: …`, the union of every run of that session.
+// Append-only (2026-11-24): the model writes only what its delta added; every did line ever written stays (exact
+// normalised repeats skipped), Next is replaced, In short is replaced when the model was asked for a new one.
+// Block order: head, In short, Next, did lines oldest → newest, notes, Files.
 function applyJournal(root, j, sessions = [], events = [], files = []) {
   const did = (Array.isArray(j?.did) ? j.did : []).slice(0, 4).map(l => clip(String(l).replace(/\n/g, ' ').trim(), 220)).filter(Boolean);
+  const inShort = j?.in_short ? clip(String(j.in_short).replace(/\s*\n\s*/g, ' ').trim(), 400) : '';
   // A note's type is a plain `type: ` prefix (no brackets: the first bracket of the line is its evidence id).
   const evs = events.map(e => `- ${/^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : today()} — ${NOTE_TYPES.includes(e.type) ? `${e.type}: ` : ''}${clip(String(e.text || '').replace(/\n/g, ' ').trim(), MAX_FACT)} [${clip(String(e.evidence || '').replace(/[\[\]\n]/g, ' ').trim(), 80)}]${e.why ? ` why: ${clip(String(e.why).replace(/\n/g, ' ').trim(), 160)}` : ''}`).filter(l => !l.includes('—  ['));
-  if (!did.length && !evs.length) return null;
+  if (!did.length && !evs.length && !inShort) return null;
   const ids = batchIds(sessions);
   const file = path.join(root, 'JOURNAL.md');
   let text = fs.existsSync(file) ? readText(file) : JOURNAL_HEADER;
-  // Blocks start at "### "; the one of this session (any date) is replaced, so a re-run restates rather than duplicates.
+  // Blocks start at "### "; the one of this session (any date) is re-written in place of the old one(s), never duplicated.
   const blocks = text.split(/\n(?=### )/);
   const header = blocks.shift();
   const tagOf = b => (b.match(/^### \d{4}-\d{2}-\d{2} — session (\S+)/) || [])[1];
   const own = blocks.filter(b => tagOf(b) && shares(tagOf(b), ids));
   const rest = blocks.filter(b => !own.includes(b));
-  const prev = own.join('\n');
   const head = `### ${today()} — session ${unionTag(own.map(tagOf), ids)}`;
-  // Events accumulate across the runs of one session (they are dated facts); summary lines are replaced (they restate).
-  const oldEvents = prev.split('\n').filter(l => /^- \d{4}-\d{2}-\d{2} — /.test(l) && !evs.some(e => normFact(e) === normFact(l)));
-  const oldFiles = prev.split('\n').filter(l => fileMemory.FILES_RE.test(l)).flatMap(fileMemory.parseFiles);
-  const filesL = fileMemory.filesLine(oldFiles, Array.isArray(files) ? files : []);
-  const block = [head, ...did.map(l => `- ${l}`), ...(j?.next ? [`- Next: ${clip(String(j.next).replace(/\n/g, ' ').trim(), 220)}`] : []), ...oldEvents, ...evs, ...(filesL ? [filesL] : [])].join('\n');
+  const old = parseJournalBlock(['', ...[...own].reverse()].join('\n'));   // file is newest first: oldest block's lines first
+  const seen = new Set(old.did.map(normFact));
+  const allDid = [...old.did, ...did.filter(l => !seen.has(normFact(l)) && seen.add(normFact(l)))];
+  const inShortL = inShort ? `- In short (covers ${allDid.length} lines): ${inShort}` : old.inShort;
+  const nextL = j?.next ? `- Next: ${clip(String(j.next).replace(/\n/g, ' ').trim(), 220)}` : old.next;
+  // Notes accumulate across the runs of one session (they are dated facts); an exact repeat is written once.
+  const oldEvents = old.notes.filter(l => !evs.some(e => normFact(e) === normFact(l)));
+  const filesL = fileMemory.filesLine(old.files.flatMap(fileMemory.parseFiles), Array.isArray(files) ? files : []);
+  const block = [head, ...(inShortL ? [inShortL] : []), ...(nextL ? [nextL] : []), ...allDid.map(l => `- ${l}`), ...oldEvents, ...evs, ...(filesL ? [filesL] : [])].join('\n');
   atomicWrite(file, [header.replace(/\s*$/, ''), block, ...rest.map(b => b.replace(/\s*$/, ''))].join('\n\n') + '\n');
-  return `journal ${prev ? 'updated' : '+1 block'}`;
+  return `journal ${own.length ? 'updated' : '+1 block'}`;
 }
 
 // ## Facts (current): one line per key, written by the owner (/memorise). Bounded by the number of keys, so the hook
@@ -392,7 +416,7 @@ function apply(root, proposal, sessions = []) {
   return done;
 }
 
-module.exports = { apply, expire, replaceSection, sectionBody, countPending };
+module.exports = { apply, expire, replaceSection, sectionBody, countPending, parseJournalBlock };
 
 if (require.main === module && process.argv.includes('--selftest')) {
   const assert = require('assert');
@@ -439,16 +463,26 @@ if (require.main === module && process.argv.includes('--selftest')) {
   assert(props.includes(`- [fact] **prod-host**: bbb (${old(1)}) [toolu_2]`) && props.includes(`- [fact] **Domain**: example.org (${old(1)}) [toolu_2]`) && !props.includes('**Prod host**: ddd'), 'changed value / new key → proposals, owner evidence not queued: ' + props);
   assert(props.includes('- [fix] [web] guard the empty id in parse() (') && props.includes('[toolu_3, toolu_4]') && !props.includes('seen ×'), 'fix hypothesis queued once, evidence accumulates, no counter: ' + props);
   assert(!props.includes('launch decided') && !ledger.includes('launch decided'), 'log items go to the journal, not Proposals nor Ledger');
-  assert(jr.startsWith('# Journal\n') && /### \d{4}-\d{2}-\d{2} — session abcd1234\+efgh5678\n- Shipped the guide hub\n- Fixed the byline\n- Next: deploy\n- \d{4}-\d{2}-\d{2} — launch decided for March \[toolu_2\] why: owner wants Q1\n- \d{4}-\d{2}-\d{2} — y{199}… \[toolu_8\]/.test(jr), 'journal block: summary, next, events (clipped): ' + jr);
+  assert(jr.startsWith('# Journal\n') && /### \d{4}-\d{2}-\d{2} — session abcd1234\+efgh5678\n- Next: deploy\n- Shipped the guide hub\n- Fixed the byline\n- \d{4}-\d{2}-\d{2} — launch decided for March \[toolu_2\] why: owner wants Q1\n- \d{4}-\d{2}-\d{2} — y{199}… \[toolu_8\]/.test(jr), 'journal block: next, did lines, events (clipped): ' + jr);
   assert(/## Candidates[\s\S]*- NEVER do X \(why\) \(\d{4}-\d{2}-\d{2}\) \[toolu_4\] \[toolu_5\] \(last seen \d{4}-\d{2}-\d{2}\)/.test(lrn) && !lrn.includes('×'), 'candidate + repeat = evidence added, no counter: ' + lrn);
   assert(/## Active Learnings[\s\S]*- ALWAYS do Y \(because\) \(owner [\d-]+: « non, toujours Y »\) \[toolu_6\]/.test(lrn), 'owner correction → Active, dated');
   assert(!lrn.includes('maybe do Z') && !lrn.includes('traversal') && !fs.existsSync(path.join(root, '_private')) && !fs.existsSync(path.join(path.dirname(root), 'web')), 'bad format and unsafe workspaces refused');
   assert(/- ALWAYS do X \(why\) \(/.test(lrn) && /- NEVER do X \(why\) \(/.test(lrn), 'opposite polarity is a separate rule');
   assert(!done.some(d => / error: /.test(d)), 'no error: ' + done);
-  // Second run of the same session: journal block replaced (not duplicated), events kept, new event appended.
+  // Second run of the same session: one block, did lines appended (an exact repeat skipped), Next replaced, events kept.
   apply(root, { summary: { did: ['Shipped the guide hub', 'Deployed'], next: 'watch logs' }, log: [{ date: `${old(0)}`, type: 'decision', text: 'domain bought', evidence: 'toolu_9' }] }, ['abcd1234-x', 'efgh5678-y']);
   const jr2 = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8');
-  assert((jr2.match(/^### /gm) || []).length === 1 && jr2.includes(`- Deployed\n- Next: watch logs\n- ${old(1)} — launch decided for March`) && jr2.includes(`- ${old(0)} — decision: domain bought [toolu_9]`) && !jr2.includes('Fixed the byline'), 'same session re-run: block replaced, events accumulate: ' + jr2);
+  assert((jr2.match(/^### /gm) || []).length === 1 && jr2.includes(`- Next: watch logs\n- Shipped the guide hub\n- Fixed the byline\n- Deployed\n- ${old(1)} — launch decided for March`) && jr2.includes(`- ${old(0)} — decision: domain bought [toolu_9]`) && (jr2.match(/Shipped the guide hub/g) || []).length === 1 && !jr2.includes('Next: deploy'), 'same session re-run: did appended + deduped, Next replaced, events accumulate: ' + jr2);
+  // In short: written with the number of did lines it covers, replaced (never added twice), kept when not asked; a run with
+  // only an In short still writes it. Invariant: every did line ever written for the session is still in its block.
+  const ever = ['Shipped the guide hub', 'Fixed the byline', 'Deployed'];
+  for (let i = 0; i < 5; i++) { ever.push(`step ${i}`); apply(root, { summary: { did: [`step ${i}`], next: `n${i}`, in_short: i === 2 ? 'Guide hub shipped,\ndeployed, steps' : null } }, ['abcd1234-x']); }
+  apply(root, { summary: { did: [], in_short: 'Guide hub shipped and deployed, five steps' } }, ['abcd1234-x']);
+  const jr2b = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8');
+  const own2 = parseJournalBlock(jr2b.split(/\n(?=### )/).find(b => b.includes('abcd1234')));
+  assert.deepStrictEqual(own2.did, ever, 'append-only invariant: ' + jr2b);
+  assert(own2.inShort === '- In short (covers 8 lines): Guide hub shipped and deployed, five steps' && (jr2b.match(/In short/g) || []).length === 1 && own2.next === '- Next: n4', 'In short replaced with its coverage, Next = newest: ' + jr2b);
+  assert(/session abcd1234\+efgh5678\n- In short \(covers 8 lines\): [^\n]+\n- Next: n4\n- Shipped the guide hub\n/.test(jr2b), 'block order: head, In short, Next, did: ' + jr2b);
   apply(root, { summary: { did: ['Other session work'] } }, ['zzzz9999']);
   const jr3 = fs.readFileSync(path.join(root, 'JOURNAL.md'), 'utf8');
   assert(jr3.indexOf('session zzzz9999') < jr3.indexOf('session abcd1234') && (jr3.match(/^### /gm) || []).length === 2, 'newest session first');
@@ -518,13 +552,13 @@ if (require.main === module && process.argv.includes('--selftest')) {
   apply(r2, { summary: { did: ['new'] } }, ['aaaa']);
   const j2 = fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8');
   assert.strictEqual((j2.match(/^### /gm) || []).length, 1, 'CRLF journal: block replaced: ' + JSON.stringify(j2));
-  assert(j2.includes('- new\r\n') && !j2.includes('- old'), 'CRLF journal: new summary: ' + JSON.stringify(j2));
+  assert(j2.includes('- old\r\n- new\r\n'), 'CRLF journal: new line appended: ' + JSON.stringify(j2));
   // A batch tag (A+B) is the block of A and of B: a later run on A alone replaces it (union tag), never a second block.
   fs.writeFileSync(path.join(r2, 'JOURNAL.md'), '# Journal\n\n### 2026-01-01 — session aaaa+bbbb\n- old ab\n');
   apply(r2, { summary: { did: ['A alone'] } }, ['aaaa']);
   const j3 = fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8');
   assert.strictEqual((j3.match(/^### /gm) || []).length, 1, 'batch tag: one block: ' + j3);
-  assert(j3.includes(`### ${old(0)} — session aaaa+bbbb\n- A alone\n`) && !j3.includes('old ab'), 'batch tag: union tag, new summary: ' + j3);
+  assert(j3.includes(`### ${old(0)} — session aaaa+bbbb\n- old ab\n- A alone\n`), 'batch tag: union tag, line appended: ' + j3);
   apply(r2, { summary: { did: ['C'] } }, ['cccc']);
   assert.strictEqual((fs.readFileSync(path.join(r2, 'JOURNAL.md'), 'utf8').match(/^### /gm) || []).length, 2, 'disjoint batch: its own block');
   fs.mkdirSync(path.join(r2, 'w'));

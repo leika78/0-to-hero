@@ -4,8 +4,10 @@
 #
 #   1. Same project root as inject-learnings.sh (nearest CLAUDE.md + DECISIONS.md above CLAUDE_PROJECT_DIR).
 #   2. Coverage line: date of the newest journal block, and how many turns the scribe has not read yet.
-#   3. The 3 newest blocks of JOURNAL.md (one block per session, written by the scribe), then one index line per
-#      older block (the 15 next: date + first summary line), and the project's 30 newest notes (typed dated lines).
+#      Before that, after /clear, waits (≤ 60 s) for the scribe to read the old session's end (scribe-trigger.js --settle).
+#   3. The 3 newest blocks of JOURNAL.md (one block per session, written by the scribe: In short, Next, the 6 newest
+#      did lines), then one index line per older block (the 15 next: date + In short or first summary line), and the
+#      project's 30 newest notes (typed dated lines).
 #   4. Each workspace's CONTEXT.md ## Current state (the scribe's per-session blocks).
 #   5. One JSON additionalContext, bounded to 9 000 chars BEFORE emission (Claude Code replaces a hook output over
 #      10 000 chars with a file path + 2k preview the model never reads). Whole entries are dropped, never cut mid-line:
@@ -26,7 +28,7 @@ done
 # 0. Kit updates: the repo's UPDATES.md is fetched in the background at most once a day (never delays the start) into
 #    ~/.claude/kit-updates/; entries newer than KIT_VERSION (the kit this hook was installed from) are told to the user,
 #    at most once a day. ZERO_TO_HERO_NO_UPDATE_CHECK=1 turns the fetch off.
-KIT_VERSION=2026-11-23   # = the newest UPDATES.md entry (kit-updates.check.js asserts it)
+KIT_VERSION=2026-11-24   # = the newest UPDATES.md entry (kit-updates.check.js asserts it)
 KIT_URL=${ZERO_TO_HERO_UPDATES_URL:-https://raw.githubusercontent.com/narsixlive/0-to-hero/master/UPDATES.md}
 upd_dir="${HOME}/.claude/kit-updates"
 kit=""
@@ -54,6 +56,7 @@ fi
 MAX_CHARS=${JOURNAL_MAX_CHARS:-9000}
 BLOCKS=${JOURNAL_BLOCKS:-3}
 BLOCK_CAP=${JOURNAL_BLOCK_CAP:-1800}     # chars per journal block (whole lines); 900 cut every dated event of a full block
+BLOCK_DID=${JOURNAL_BLOCK_DID:-6}        # newest did lines shown per block (In short + Next always shown)
 STATE_CAP=${JOURNAL_STATE_CAP:-500}      # chars per workspace Current state (whole lines)
 INDEX=${JOURNAL_INDEX:-15}               # older blocks listed as one index line each (0 = none)
 INDEX_CAP=${JOURNAL_INDEX_CAP:-160}      # chars of summary per index line
@@ -64,6 +67,16 @@ NOTE_CAP=${JOURNAL_NOTE_CAP:-170}       # chars per note line
 clip_lines() {  # $1 cap ; stdin → stdout
     awk -v cap="$1" '{ if (total + length($0) + 1 > cap) { if (!cut) print "  …"; cut=1; next } total += length($0) + 1; print }'
 }
+
+# 1b. After /clear the scribe has not read the old session's end yet (its worker takes 30-90 s): scribe-trigger.js
+#     --settle launches the worker if none runs and waits for it, at most SCRIBE_SETTLE_MS (60 s; the hook's timeout in
+#     settings.json must be above it). Nothing to wait for = no delay.
+hook_input=""
+[[ -t 0 ]] || hook_input="$(cat 2>/dev/null || true)"
+settle_js="$(dirname "${BASH_SOURCE[0]}")/scribe/scribe-trigger.js"
+if [[ -n "${hook_input}" && -f "${settle_js}" ]] && command -v node >/dev/null 2>&1; then
+    printf '%s' "${hook_input}" | node "${settle_js}" --settle >/dev/null 2>&1 || true
+fi
 
 # 2. Coverage: newest block date + unread turns (queue of the scribe state dir, matched case-insensitively).
 journal="${cwd}/JOURNAL.md"
@@ -94,13 +107,29 @@ coverage+="."
 # 3. Newest journal blocks (file is newest-first). Blocks start at "### ".
 blocks=""
 if [[ -f "${journal}" ]]; then
-    # The `- Files:` line is for the file-memory hook (scribe/file-memory.js), not for the session start: left out.
-    # The dated notes are left out too: they are listed once, project-wide, in "Recent notes" below.
-    blocks="$(awk -v n="${BLOCKS}" '
-        /^### / { k++ }
+    # Fixed size whatever the session's length (the scribe appends did lines, never restates): head, In short, Next,
+    # a count of the earlier lines, the BLOCK_DID newest did lines. The `- Files:` line is for the file-memory hook
+    # (scribe/file-memory.js), not for the session start: left out. The dated notes are left out too: they are listed
+    # once, project-wide, in "Recent notes" below.
+    blocks="$(awk -v n="${BLOCKS}" -v keep="${BLOCK_DID}" '
+        function flush(   i, from) {
+            if (head == "") return
+            print head
+            if (short != "") print short
+            if (nxt != "") print nxt
+            from = d - keep; if (from < 0) from = 0
+            if (from > 0) print "- (+" from " earlier lines in JOURNAL.md)"
+            for (i = from + 1; i <= d; i++) print did[i]
+            head = ""; short = ""; nxt = ""; d = 0
+        }
+        /^### / { flush(); if (++k > n) exit; head = $0; next }
+        k < 1 { next }
+        /^- In short \(covers / { short = $0; next }
+        /^- Next: / { nxt = $0; next }
         /^- Files: / { next }
         /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] — / { next }
-        k >= 1 && k <= n { print }
+        /^- / { did[++d] = $0 }
+        END { flush() }
     ' "${journal}" | awk -v cap="${BLOCK_CAP}" '
         /^### / { if (buf != "") flush(); buf=""; total=0; cut=0 }
         { if (total + length($0) + 1 > cap) { if (!cut) buf = buf "  …\n"; cut=1; next } buf = buf $0 "\n"; total += length($0) + 1 }
@@ -109,19 +138,22 @@ if [[ -f "${journal}" ]]; then
     ')"
 fi
 
-# 3b. Index of the older blocks (borrowed from claude-mem's startup index): one line each, date + the block's first
-#     summary line, so the session knows a topic existed and greps JOURNAL.md for the block. Cut on a word boundary
-#     (never inside a multi-byte character, whatever the awk locale).
+# 3b. Index of the older blocks (borrowed from claude-mem's startup index): one line each, date + the block's In short
+#     (else its first summary line), so the session knows a topic existed and greps JOURNAL.md for the block. Cut on a
+#     word boundary (never inside a multi-byte character, whatever the awk locale).
 index=""
 if [[ -f "${journal}" && "${INDEX}" -gt 0 ]]; then
     index="$(awk -v n="${BLOCKS}" -v m="${INDEX}" -v cap="${INDEX_CAP}" '
-        /^### / { k++; want = (k > n && k <= n + m); date = substr($0, 5, 10); next }
-        want && /^- / && !/^- Next: / && !/^- Files: / && !/^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] — / {
-            line = substr($0, 3)
+        function out(   line) {
+            line = (short != "" ? short : first); short = ""; first = ""
+            if (!want || line == "") return
             if (length(line) > cap) { line = substr(line, 1, cap); sub(/ [^ ]*$/, "", line); line = line " …" }
             print "- " date " — " line
-            want = 0
         }
+        /^### / { out(); k++; want = (k > n && k <= n + m); date = substr($0, 5, 10); next }
+        want && /^- In short \(covers / { short = $0; sub(/^- In short \(covers [0-9]+ lines?\): /, "", short); next }
+        want && first == "" && /^- / && !/^- Next: / && !/^- Files: / && !/^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] — / { first = substr($0, 3) }
+        END { out() }
     ' "${journal}")"
 fi
 

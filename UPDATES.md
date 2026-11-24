@@ -5,6 +5,10 @@
      changes for them and why, in everyday words (no file names, no technical terms).
      Each new entry also bumps KIT_VERSION in core/hooks/inject-journal.sh to the same date. -->
 
+## 2026-11-24
+- Claude's memory of your sessions now costs about half as much, and it no longer forgets the start of a long session: every step is kept.
+- After you clear the conversation, the new one waits a few seconds so it knows what you just did.
+
 ## 2026-11-23
 - When you tell Claude a fact about your project in your own words (a price, a host, a name), its memory now keeps it right away instead of waiting for your review.
 - The next memory review lists the facts it kept that way, so you can undo one just by saying it was wrong.

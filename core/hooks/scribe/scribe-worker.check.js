@@ -56,7 +56,8 @@ const { proposal, rejected } = verify({
 
 assert.strictEqual(proposal.state.length, 1, 'state needs a successful result id in a known workspace; a memory read is not one');
 assert.deepStrictEqual(proposal.state[0].evidence, ['toolu_real1'], 'fake ids filtered out of evidence');
-assert.deepStrictEqual(proposal.summary, { did: ['deployed the thing'], next: 'watch', evidence: ['toolu_real1'] }, 'summary kept with its real ids only');
+assert.deepStrictEqual(proposal.summary, { did: ['deployed the thing'], next: 'watch', in_short: null, evidence: ['toolu_real1'] }, 'summary kept with its real ids only');
+assert.deepStrictEqual(verify({ summary: { did: [], in_short: 'whole session' } }, delta, ['web']).proposal.summary, { did: [], next: null, in_short: 'whole session', evidence: [] }, 'an In short alone rides through (it restates verified lines)');
 assert.deepStrictEqual(proposal.fixes.map(f => f.text), ['guard in build()'], 'fix needs a successful id');
 assert.deepStrictEqual(proposal.facts.map(f => `${f.key}=${f.value}`), ['Prod host=hetzner'], 'keyed facts need a successful id; fake id dropped');
 assert.deepStrictEqual(proposal.log.map(f => f.text), ['prod deploy tomorrow', 'by id', 'RSS shuts down 2099-01-01 (future date: scheduled, not yet happened)', 'launch set for 2099-01-01 (future date: scheduled, not yet happened)'],'facts need a successful id or a real quote; future-dated fact dropped, future date in text tagged');
@@ -107,8 +108,25 @@ assert.deepStrictEqual(fs.readdirSync(tmp).filter(f => f.endsWith('.stale')), []
 // memorySnapshot: a JOURNAL block tagged "aaaa1111+bbbb2222" (earlier merged run) is found for a run with aaaa1111 alone; CRLF normalised.
 const { memorySnapshot } = require('./scribe-worker.js');
 const jroot = path.join(tmp, 'jroot'); fs.mkdirSync(jroot);
-fs.writeFileSync(path.join(jroot, 'JOURNAL.md'), '# Journal\r\n\r\n### 2026-01-01 — session aaaa1111+bbbb2222\r\n- old line\r\n\r\n### 2026-01-02 — session cccc3333\r\n- other\r\n');
-assert.strictEqual(memorySnapshot(jroot, ['.'], '', ['aaaa1111-0000']), '\n### JOURNAL.md — what was already summarised for this session (restate it whole, updated)\n### 2026-01-01 — session aaaa1111+bbbb2222\n- old line\n', 'merged-tag block found by one of its ids, CRLF stripped');
+fs.writeFileSync(path.join(jroot, 'JOURNAL.md'), '# Journal\r\n\r\n### 2026-01-01 — session aaaa1111+bbbb2222\r\n- old line\r\n- Files: a.ts\r\n\r\n### 2026-01-02 — session cccc3333\r\n- other\r\n');
+const HEAD = '\n### JOURNAL.md — this session\'s block so far (the writer keeps every line: write only what THIS delta adds)\n';
+assert.strictEqual(memorySnapshot(jroot, ['.'], '', ['aaaa1111-0000']), HEAD + '### 2026-01-01 — session aaaa1111+bbbb2222\n- old line\n', 'merged-tag block found by one of its ids, CRLF stripped, Files line hidden');
+// Constant-size view: In short + Next + 4 newest did lines + the (+K earlier) marker + newest notes; In short due after 4 uncovered lines or on flush.
+const did = n => Array.from({ length: n }, (_, i) => `- d${i}`).join('\n');
+fs.writeFileSync(path.join(jroot, 'JOURNAL.md'), `# Journal\n\n### 2026-01-03 — session dddd4444\n- In short (covers 2 lines): two first\n- Next: go\n${did(9)}\n- 2026-01-03 — gotcha: n1 [toolu_1]\n- Files: a.ts\n`);
+const snap = memorySnapshot(jroot, ['.'], '', ['dddd4444']);
+assert.ok(snap.startsWith(HEAD + '### 2026-01-03 — session dddd4444\n- In short (covers 2 lines): two first\n- Next: go\n(+5 earlier lines, kept)\n- d5\n- d6\n- d7\n- d8\n- 2026-01-03 — gotcha: n1 [toolu_1]\n'), 'constant-size block view: ' + snap);
+assert.ok(snap.includes('In short is due') && snap.includes('two first\n- d2\n') && snap.includes('- d8\n') && !snap.includes('- d1\n- d2'), 'In short due: current In short + uncovered lines: ' + snap);
+fs.writeFileSync(path.join(jroot, 'JOURNAL.md'), `# Journal\n\n### 2026-01-03 — session dddd4444\n- In short (covers 7 lines): most\n${did(9)}\n`);
+assert.ok(!memorySnapshot(jroot, ['.'], '', ['dddd4444']).includes('In short is due'), '2 uncovered lines: not due');
+assert.ok(memorySnapshot(jroot, ['.'], '', ['dddd4444'], true).includes('In short is due'), 'flush: due');
+// Trimmed snapshot: Ledger 5 newest; Current state = this batch's blocks + the newest block, others left out.
+fs.writeFileSync(path.join(jroot, 'DECISIONS.md'), `# D\n\n## Ledger\n${did(8)}\n`);
+fs.mkdirSync(path.join(jroot, 'w')); fs.writeFileSync(path.join(jroot, 'w', 'AGENT.md'), '');
+fs.writeFileSync(path.join(jroot, 'w', 'CONTEXT.md'), '## Current state\n\nUpdated: 2026-01-03 (scribe, session newest00). N\n\nUpdated: 2026-01-02 (scribe, session other000). O\n\nUpdated: 2026-01-01 (scribe, session dddd4444+eeee5555). MINE\n\n## Thread\n');
+const snap2 = memorySnapshot(jroot, ['w'], 'w/x.ts', ['eeee5555']);
+assert.ok(snap2.includes('## Ledger (5 newest)\n- d0\n- d1\n- d2\n- d3\n- d4\n') && !snap2.includes('- d5'), 'Ledger 5: ' + snap2);
+assert.ok(snap2.includes('## Current state\nUpdated: 2026-01-03 (scribe, session newest00). N\n\nUpdated: 2026-01-01 (scribe, session dddd4444+eeee5555). MINE\n') && !snap2.includes('. O'), 'Current state trimmed: ' + snap2);
 
 // A failed model call (spawn error: the binary does not exist) is charged to the budget and counted
 // like a failed apply: after MAX_APPLY_FAILURES (3) runs the delta is given up, no longer re-queued.
@@ -135,8 +153,8 @@ assert.strictEqual(JSON.parse(lines('cursors/s1.json')[0]).line, 1, 'cursor adva
 
 // A successful model call, stubbed: a node script that saves the prompt and answers an empty proposal.
 const stub = path.join(tmp, 'stub-claude.js'); const promptFile = path.join(tmp, 'prompt.txt');
-fs.writeFileSync(stub, `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(promptFile)}, fs.readFileSync(0, 'utf8'));
-console.log(JSON.stringify({ result: JSON.stringify({ state: [], summary: null, facts: [], log: [], fixes: [], candidates: [], skipped_reason: 'stub' }), usage: { input_tokens: 10, output_tokens: 1 } }));`);
+fs.writeFileSync(stub, `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(promptFile)}, fs.readFileSync(0, 'utf8') + '\\nCACHE=' + process.env.DISABLE_PROMPT_CACHING + ' MODEL=' + process.argv[process.argv.indexOf('--model') + 1]);
+console.log(JSON.stringify({ result: JSON.stringify({ state: [], summary: null, facts: [], log: [], fixes: [], candidates: [], skipped_reason: 'stub' }), usage: { input_tokens: 10, output_tokens: 1 }, modelUsage: { 'claude-sonnet-5-5': {} } }));`);
 const stubEnv = { ...env, SCRIBE_CLAUDE_BIN: stub };
 const runAs = s => spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), s], { env: stubEnv, encoding: 'utf8' });
 const stateOf = s => { const d = path.join(home, '.claude', 'scribe', s); fs.mkdirSync(path.join(d, 'cursors'), { recursive: true }); return d; };
@@ -151,6 +169,8 @@ queue('cut', [['sa', trA], ['sb', trB], ['sc', trB]]);
 runAs('cut');
 assert.strictEqual(/=== SESSION sa ===\nnull/.test(fs.readFileSync(promptFile, 'utf8')), false, 'a signal-less cut never puts "null" in the prompt');
 assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('cut'), 'cursors', 'sa.json'), 'utf8')).line, 26, 'uncut delta sent and acknowledged whole');
+assert.ok(fs.readFileSync(promptFile, 'utf8').endsWith('CACHE=1 MODEL=claude-sonnet-5-5'), 'child runs with prompt caching off, pinned model');
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('cut'), 'usage.jsonl'), 'utf8').trim()).model, 'claude-sonnet-5-5', 'usage.jsonl logs the model served');
 
 // A throw after the writer applied (here: the cursor path is a directory) must not re-queue the batch (replay = paid twice).
 queue('post', [['p1', trB]]); fs.mkdirSync(path.join(stateOf('post'), 'cursors', 'p1.json'));
@@ -172,5 +192,32 @@ fs.writeFileSync(trail, `console.log(JSON.stringify({ result: JSON.stringify({ s
 queue('tr', [['t1', trB]]);
 spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'tr'], { env: { ...env, SCRIBE_CLAUDE_BIN: trail }, encoding: 'utf8' });
 assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('tr'), 'cursors', 't1.json'), 'utf8')).line, 1, 'trailing prose after the JSON is tolerated');
+// A refusal from the pinned model is retried once on the fallback model: applied, both calls charged, fallback logged.
+const refuse = path.join(tmp, 'stub-refuse.js');
+fs.writeFileSync(refuse, `const m = process.argv[process.argv.indexOf('--model') + 1];
+console.log(JSON.stringify(m === 'claude-sonnet-5-5' ? { is_error: false, stop_reason: 'refusal', result: '', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 0 }, modelUsage: { [m]: {} } }
+  : { result: JSON.stringify({ state: [], summary: null, facts: [], log: [], fixes: [], candidates: [], skipped_reason: 'stub' }), total_cost_usd: 0.02, usage: { input_tokens: 10, output_tokens: 1 }, modelUsage: { [m]: {} } }));`);
+queue('rf', [['r1', trB]]);
+spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'rf'], { env: { ...env, SCRIBE_CLAUDE_BIN: refuse }, encoding: 'utf8' });
+const rfRow = JSON.parse(fs.readFileSync(path.join(stateOf('rf'), 'usage.jsonl'), 'utf8').trim());
+assert.ok(rfRow.ok && rfRow.fallback === true && rfRow.model === 'claude-sonnet-5' && Math.abs(rfRow.cost - 0.03) < 1e-9, 'refusal → fallback model, both calls charged: ' + JSON.stringify(rfRow));
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(stateOf('rf'), 'cursors', 'r1.json'), 'utf8')).line, 1, 'delta applied after the fallback, not counted as a failure');
+// Refused by both models: a specific alert at once. Fallbacks today (all projects) reaching 5 → one alert per day.
+const home2 = path.join(tmp, 'home2'), st2 = path.join(home2, '.claude', 'scribe', 'both');
+fs.mkdirSync(path.join(st2, 'cursors'), { recursive: true });
+const day = new Date().toISOString().slice(0, 10);
+fs.mkdirSync(path.join(home2, '.claude', 'scribe', 'other'));
+fs.writeFileSync(path.join(home2, '.claude', 'scribe', 'other', 'usage.jsonl'), [1, 2, 3].map(() => JSON.stringify({ date: day, sessions: ['o'], tokens: 1, fallback: true })).join('\n') + '\n');
+const refuseAll = path.join(tmp, 'stub-refuse-all.js');
+fs.writeFileSync(refuseAll, `console.log(JSON.stringify({ is_error: true, result: 'refused', usage: { input_tokens: 10, output_tokens: 0 }, modelUsage: { x: {} } }));`);
+const reportOf = () => { try { return fs.readFileSync(path.join(st2, 'report.txt'), 'utf8'); } catch { return ''; } };
+const runBoth = () => { fs.writeFileSync(path.join(st2, 'queue.jsonl'), JSON.stringify({ session_id: 'b1abcdef9', transcript_path: trB, cwd: proj, flush: true, ts: Date.now() }) + '\n');
+  spawnSync(process.execPath, [path.join(__dirname, 'scribe-worker.js'), 'both'], { env: { ...env, HOME: home2, USERPROFILE: home2, SCRIBE_CLAUDE_BIN: refuseAll }, encoding: 'utf8' }); };
+runBoth();
+assert.ok(/refused \(or no JSON\) by claude-sonnet-5-5 AND claude-sonnet-5 .*delta kept for retry/.test(reportOf()) && reportOf().includes('session b1abcdef') && !reportOf().includes('calls refused'), 'refused by both: specific alert, 4 fallbacks: no daily alert yet: ' + reportOf());
+runBoth();
+assert.strictEqual((reportOf().match(/5\/5 calls refused by claude-sonnet-5-5 today/g) || []).length, 1, '5th fallback today: daily alert: ' + reportOf());
+runBoth();
+assert.strictEqual((reportOf().match(/calls refused by .* today/g) || []).length, 1, 'daily alert once per day: ' + reportOf());
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('scribe-worker.check: ok');
